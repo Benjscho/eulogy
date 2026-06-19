@@ -8,4 +8,26 @@ repository = "https://github.com/Benjscho/eulogy"
 keywords = ["async", "drop", "cleanup", "teardown"]
 categories = ["asynchronous", "rust-patterns"]
 
+[features]
+tokio = ["dep:tokio"]
+smol = ["dep:smol"]
+
 [dependencies]
+async-channel = "2"
+tracing = "0.1"
+tokio = { version = "1", features = ["rt"], optional = true }
+smol = { version = "2", optional = true }
+
+[dev-dependencies]
+tokio = { version = "1", features = ["full"] }
+smol = "2"
+
+[[example]]
+name = "tokio"
+path = "examples/tokio.rs"
+required-features = ["tokio"]
+
+[[example]]
+name = "smol"
+path = "examples/smol.rs"
+required-features = ["smol"]
