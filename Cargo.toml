@@ -4,6 +4,7 @@ version = "0.1.0"
 edition = "2024"
 description = "Userspace async drop for Rust"
 license = "Apache-2.0"
+repository = "https://github.com/Benjscho/eulogy"
 keywords = ["async", "drop", "cleanup", "teardown"]
 categories = ["asynchronous", "rust-patterns"]
 
