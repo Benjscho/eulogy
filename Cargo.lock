@@ -194,9 +194,19 @@ name = "eulogy"
 version = "0.1.0"
 dependencies = [
  "async-channel",
+ "eulogy-derive",
  "smol",
  "tokio",
  "tracing",
+]
+
+[[package]]
+name = "eulogy-derive"
+version = "0.1.0"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn",
 ]
 
 [[package]]

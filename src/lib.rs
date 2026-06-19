@@ -33,10 +33,18 @@
 
 use std::future::Future;
 use std::pin::Pin;
-use std::{fmt, ops};
+use std::ops;
+
+/// Re-export the derive macro when the `derive` feature is enabled.
+#[cfg(feature = "derive")]
+pub use eulogy_derive::AsyncDrop;
 
 /// A type that requires async cleanup.
-pub trait AsyncDrop: Send + Sync + fmt::Debug + 'static {
+///
+/// The trait itself has no bounds beyond `Send` — additional bounds like
+/// `'static` are only required by [`later`]/[`later_with`] which need to
+/// move the value into a spawned task.
+pub trait AsyncDrop: Send {
     /// Perform async cleanup, consuming the value.
     fn async_drop(self) -> impl Future<Output = ()> + Send;
 }
@@ -52,13 +60,12 @@ pub trait Spawner {
 ///
 /// Access the inner value via `Deref`/`DerefMut`.
 #[must_use]
-#[derive(Debug)]
-pub struct DropLater<T: AsyncDrop> {
+pub struct DropLater<T: AsyncDrop + 'static> {
     value: Option<T>,
     dropper: Option<async_channel::Sender<T>>,
 }
 
-impl<T: AsyncDrop> DropLater<T> {
+impl<T: AsyncDrop + 'static> DropLater<T> {
     fn new(value: T, dropper: async_channel::Sender<T>) -> Self {
         Self {
             value: Some(value),
@@ -67,7 +74,7 @@ impl<T: AsyncDrop> DropLater<T> {
     }
 }
 
-impl<T: AsyncDrop> Drop for DropLater<T> {
+impl<T: AsyncDrop + 'static> Drop for DropLater<T> {
     fn drop(&mut self) {
         let value = self.value.take().expect("drop runs once");
         let sender = self.dropper.take().expect("drop runs once");
@@ -77,16 +84,24 @@ impl<T: AsyncDrop> Drop for DropLater<T> {
     }
 }
 
-impl<T: AsyncDrop> ops::Deref for DropLater<T> {
+impl<T: AsyncDrop + 'static> ops::Deref for DropLater<T> {
     type Target = T;
     fn deref(&self) -> &Self::Target {
         self.value.as_ref().unwrap()
     }
 }
 
-impl<T: AsyncDrop> ops::DerefMut for DropLater<T> {
+impl<T: AsyncDrop + 'static> ops::DerefMut for DropLater<T> {
     fn deref_mut(&mut self) -> &mut Self::Target {
         self.value.as_mut().unwrap()
+    }
+}
+
+impl<T: AsyncDrop + std::fmt::Debug + 'static> std::fmt::Debug for DropLater<T> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("DropLater")
+            .field("value", &self.value)
+            .finish()
     }
 }
 
@@ -99,7 +114,7 @@ impl<T: AsyncDrop> ops::DerefMut for DropLater<T> {
 ///
 /// Compile-time error if no runtime feature is enabled.
 #[cfg(feature = "tokio")]
-pub fn later<T: AsyncDrop>(value: T) -> DropLater<T> {
+pub fn later<T: AsyncDrop + 'static>(value: T) -> DropLater<T> {
     later_with(value, &TokioSpawner)
 }
 
@@ -112,13 +127,13 @@ pub fn later<T: AsyncDrop>(value: T) -> DropLater<T> {
 ///
 /// Compile-time error if no runtime feature is enabled.
 #[cfg(all(feature = "smol", not(feature = "tokio")))]
-pub fn later<T: AsyncDrop>(value: T) -> DropLater<T> {
+pub fn later<T: AsyncDrop + 'static>(value: T) -> DropLater<T> {
     later_with(value, &SmolSpawner)
 }
 
 /// Wrap a value so its [`AsyncDrop`] runs when the guard is dropped,
 /// using a custom [`Spawner`].
-pub fn later_with<T: AsyncDrop>(value: T, spawner: &impl Spawner) -> DropLater<T> {
+pub fn later_with<T: AsyncDrop + 'static>(value: T, spawner: &impl Spawner) -> DropLater<T> {
     let (tx, rx) = async_channel::bounded(1);
     let guard = DropLater::new(value, tx);
     spawner.spawn(Box::pin(async move {

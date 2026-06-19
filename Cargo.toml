@@ -9,6 +9,7 @@ keywords = ["async", "drop", "cleanup", "teardown"]
 categories = ["asynchronous", "rust-patterns"]
 
 [features]
+derive = ["dep:eulogy-derive"]
 tokio = ["dep:tokio"]
 smol = ["dep:smol"]
 
@@ -17,6 +18,7 @@ async-channel = "2"
 tracing = "0.1"
 tokio = { version = "1", features = ["rt"], optional = true }
 smol = { version = "2", optional = true }
+eulogy-derive = { version = "0.1", path = "eulogy-derive", optional = true }
 
 [dev-dependencies]
 tokio = { version = "1", features = ["full"] }
@@ -31,3 +33,8 @@ required-features = ["tokio"]
 name = "smol"
 path = "examples/smol.rs"
 required-features = ["smol"]
+
+[[example]]
+name = "derive"
+path = "examples/derive.rs"
+required-features = ["derive", "tokio"]
