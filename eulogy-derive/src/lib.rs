@@ -1,6 +1,23 @@
 use proc_macro::TokenStream;
+use proc_macro2::{Span, TokenStream as TokenStream2};
+use proc_macro_crate::{crate_name, FoundCrate};
 use quote::quote;
 use syn::{parse_macro_input, DeriveInput, Data, Fields, Ident, Meta, Expr, ExprArray};
+
+/// Resolve the path to the `eulogy` crate, honoring any rename via
+/// `[dependencies] foo = { package = "eulogy" }`.
+fn eulogy_crate() -> TokenStream2 {
+    match crate_name("eulogy") {
+        Ok(FoundCrate::Itself) => quote!(crate),
+        Ok(FoundCrate::Name(name)) => {
+            let ident = Ident::new(&name, Span::call_site());
+            quote!(::#ident)
+        }
+        // Fallback to the canonical name; will emit a normal "unresolved
+        // crate `eulogy`" error if the user really hasn't depended on it.
+        Err(_) => quote!(::eulogy),
+    }
+}
 
 /// Derive `AsyncDrop` for a struct.
 ///
@@ -73,8 +90,9 @@ pub fn derive_async_drop(input: TokenStream) -> TokenStream {
         .map(|ident| quote! { self.#ident.async_drop().await; })
         .collect();
 
+    let krate = eulogy_crate();
     let expanded = quote! {
-        impl #impl_generics eulogy::AsyncDrop for #name #ty_generics #where_clause {
+        impl #impl_generics #krate::AsyncDrop for #name #ty_generics #where_clause {
             async fn async_drop(self) {
                 #(#drop_calls)*
             }
