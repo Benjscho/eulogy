@@ -59,7 +59,7 @@ pub trait Spawner {
 /// A guard that runs [`AsyncDrop`] on the contained value when dropped.
 ///
 /// Access the inner value via `Deref`/`DerefMut`.
-#[must_use]
+#[must_use = "dropping the guard is what triggers async_drop — keep it alive until you want cleanup"]
 pub struct DropLater<T: AsyncDrop + 'static> {
     value: Option<T>,
     dropper: Option<async_channel::Sender<T>>,
