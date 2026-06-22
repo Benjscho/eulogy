@@ -35,6 +35,14 @@ use std::future::Future;
 use std::pin::Pin;
 use std::ops;
 
+#[cfg(all(feature = "tokio", feature = "smol"))]
+compile_error!(
+    "eulogy: enable only one of `tokio` or `smol` — both runtimes active in the \
+     same binary means later() silently picks tokio and any smol-context drop \
+     panics. If a transitive dep is enabling the other feature, disable its \
+     default features."
+);
+
 /// Re-export the derive macro when the `derive` feature is enabled.
 #[cfg(feature = "derive")]
 pub use eulogy_derive::AsyncDrop;
