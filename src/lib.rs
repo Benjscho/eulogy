@@ -107,12 +107,10 @@ impl<T: AsyncDrop + std::fmt::Debug + 'static> std::fmt::Debug for DropLater<T> 
 
 /// Wrap a value so its [`AsyncDrop`] runs when the guard is dropped.
 ///
-/// Uses the runtime enabled via feature flag (`tokio` or `smol`).
+/// Uses the runtime enabled via feature flag. Requires either the `tokio` or
+/// `smol` feature; without one of these, `later` is not defined and calls
+/// will fail to compile (use [`later_with`] for a custom [`Spawner`]).
 /// Libraries call this without caring which runtime the binary chose.
-///
-/// # Panics
-///
-/// Compile-time error if no runtime feature is enabled.
 #[cfg(feature = "tokio")]
 pub fn later<T: AsyncDrop + 'static>(value: T) -> DropLater<T> {
     later_with(value, &TokioSpawner)
@@ -120,12 +118,8 @@ pub fn later<T: AsyncDrop + 'static>(value: T) -> DropLater<T> {
 
 /// Wrap a value so its [`AsyncDrop`] runs when the guard is dropped.
 ///
-/// Uses the runtime enabled via feature flag (`tokio` or `smol`).
-/// Libraries call this without caring which runtime the binary chose.
-///
-/// # Panics
-///
-/// Compile-time error if no runtime feature is enabled.
+/// See the [`tokio`-flavored variant](later) for details. Defined when the
+/// `smol` feature is enabled and `tokio` is not.
 #[cfg(all(feature = "smol", not(feature = "tokio")))]
 pub fn later<T: AsyncDrop + 'static>(value: T) -> DropLater<T> {
     later_with(value, &SmolSpawner)
