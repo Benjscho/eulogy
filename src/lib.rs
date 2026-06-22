@@ -119,6 +119,14 @@ impl<T: AsyncDrop + std::fmt::Debug + 'static> std::fmt::Debug for DropLater<T> 
 /// `smol` feature; without one of these, `later` is not defined and calls
 /// will fail to compile (use [`later_with`] for a custom [`Spawner`]).
 /// Libraries call this without caring which runtime the binary chose.
+///
+/// # Panics
+///
+/// Must be called from within a runtime context. With the `tokio` feature,
+/// calling this outside a `#[tokio::main]` / `#[tokio::test]` / `Runtime::block_on`
+/// scope panics with "there is no reactor running" — the same rule as
+/// `tokio::spawn`. Tests using `#[test]` instead of `#[tokio::test]` are the
+/// most common offender. Same caveat for `smol::spawn` under the `smol` feature.
 #[cfg(feature = "tokio")]
 pub fn later<T: AsyncDrop + 'static>(value: T) -> DropLater<T> {
     later_with(value, &TokioSpawner)
@@ -128,6 +136,10 @@ pub fn later<T: AsyncDrop + 'static>(value: T) -> DropLater<T> {
 ///
 /// See the [`tokio`-flavored variant](later) for details. Defined when the
 /// `smol` feature is enabled and `tokio` is not.
+///
+/// # Panics
+///
+/// Must be called from within a `smol::block_on` (or `smol::Executor`) scope.
 #[cfg(all(feature = "smol", not(feature = "tokio")))]
 pub fn later<T: AsyncDrop + 'static>(value: T) -> DropLater<T> {
     later_with(value, &SmolSpawner)
