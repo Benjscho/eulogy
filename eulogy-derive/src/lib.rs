@@ -82,6 +82,11 @@ fn expand(input: &DeriveInput) -> syn::Result<TokenStream2> {
         }
     };
 
+    let all_field_names: Vec<Ident> = fields
+        .iter()
+        .filter_map(|f| f.ident.clone())
+        .collect();
+
     let mut entries: Vec<Entry> = Vec::new();
 
     for f in fields.iter() {
@@ -127,6 +132,34 @@ fn expand(input: &DeriveInput) -> syn::Result<TokenStream2> {
         }
 
         entries.push(Entry { ident, after });
+    }
+
+    // Validate every `after` reference: it must name a field, that field must
+    // itself be annotated with #[eulogy], and it must not be self-referential.
+    for entry in &entries {
+        for dep in &entry.after {
+            if dep == &entry.ident {
+                return Err(syn::Error::new_spanned(
+                    dep,
+                    format!("`{}` cannot list itself in #[eulogy(after = [...])]", dep),
+                ));
+            }
+            if !all_field_names.iter().any(|f| f == dep) {
+                return Err(syn::Error::new_spanned(
+                    dep,
+                    format!("no field named `{}` in this struct", dep),
+                ));
+            }
+            if !entries.iter().any(|e| &e.ident == dep) {
+                return Err(syn::Error::new_spanned(
+                    dep,
+                    format!(
+                        "field `{}` is not annotated with #[eulogy] — it cannot appear in an `after` list",
+                        dep
+                    ),
+                ));
+            }
+        }
     }
 
     let sorted = topo_sort(&entries)?;
