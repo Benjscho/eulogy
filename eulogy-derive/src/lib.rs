@@ -2,7 +2,7 @@ use proc_macro::TokenStream;
 use proc_macro2::{Span, TokenStream as TokenStream2};
 use proc_macro_crate::{crate_name, FoundCrate};
 use quote::quote;
-use syn::{parse_macro_input, DeriveInput, Data, Fields, Ident, Meta, Expr, ExprArray};
+use syn::{parse_macro_input, parse_quote, DeriveInput, Data, Fields, Ident, Meta, Expr, ExprArray, Type, WhereClause};
 
 /// Resolve the path to the `eulogy` crate, honoring any rename via
 /// `[dependencies] foo = { package = "eulogy" }`.
@@ -50,13 +50,13 @@ pub fn derive_async_drop(input: TokenStream) -> TokenStream {
 
 struct Entry {
     ident: Ident,
+    ty: Type,
     after: Vec<Ident>,
 }
 
 fn expand(input: &DeriveInput) -> syn::Result<TokenStream2> {
     let name = &input.ident;
     let generics = &input.generics;
-    let (impl_generics, ty_generics, where_clause) = generics.split_for_impl();
 
     let fields = match &input.data {
         Data::Struct(data) => match &data.fields {
@@ -94,6 +94,7 @@ fn expand(input: &DeriveInput) -> syn::Result<TokenStream2> {
             continue;
         };
         let ident = f.ident.clone().expect("named field");
+        let ty = f.ty.clone();
         let mut after = Vec::new();
 
         if let Meta::List(_) = &attr.meta {
@@ -131,7 +132,7 @@ fn expand(input: &DeriveInput) -> syn::Result<TokenStream2> {
             })?;
         }
 
-        entries.push(Entry { ident, after });
+        entries.push(Entry { ident, ty, after });
     }
 
     // Validate every `after` reference: it must name a field, that field must
@@ -170,6 +171,22 @@ fn expand(input: &DeriveInput) -> syn::Result<TokenStream2> {
         .collect();
 
     let krate = eulogy_crate();
+
+    // Synthesize `where Ty: eulogy::AsyncDrop` for each annotated field so users
+    // with generic structs (`struct Wrapper<T> { #[eulogy] inner: T }`) don't
+    // need to spell the bound out themselves.
+    let (impl_generics, ty_generics, existing_where) = generics.split_for_impl();
+    let mut where_clause: WhereClause = match existing_where {
+        Some(w) => w.clone(),
+        None => parse_quote!(where),
+    };
+    for entry in &entries {
+        let ty = &entry.ty;
+        where_clause
+            .predicates
+            .push(parse_quote!(#ty: #krate::AsyncDrop));
+    }
+
     Ok(quote! {
         impl #impl_generics #krate::AsyncDrop for #name #ty_generics #where_clause {
             async fn async_drop(self) {

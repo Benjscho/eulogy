@@ -59,6 +59,13 @@ struct SkipsUnannotated {
     not_tracked: Tracker,
 }
 
+// Generic struct — the derive should synthesize `T: AsyncDrop` automatically.
+#[derive(Debug, AsyncDrop)]
+struct Generic<T: std::fmt::Debug + Send> {
+    #[eulogy]
+    inner: T,
+}
+
 #[tokio::test]
 async fn no_deps_drops_in_declaration_order() {
     let order = Arc::new(AtomicU32::new(0));
@@ -103,6 +110,16 @@ async fn diamond_deps() {
     // a and b dropped before last
     assert!(a_at.load(Ordering::SeqCst) < last_at.load(Ordering::SeqCst));
     assert!(b_at.load(Ordering::SeqCst) < last_at.load(Ordering::SeqCst));
+}
+
+#[tokio::test]
+async fn generic_field_gets_async_drop_bound() {
+    let order = Arc::new(AtomicU32::new(0));
+    let (tracker, dropped_at) = Tracker::new(order.clone());
+    let guard = later(Generic { inner: tracker });
+    drop(guard);
+    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    assert_eq!(dropped_at.load(Ordering::SeqCst), 1);
 }
 
 #[tokio::test]
