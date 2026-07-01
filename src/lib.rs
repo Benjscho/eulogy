@@ -141,21 +141,20 @@ impl<T: AsyncDrop + 'static> Drop for DropLater<T> {
 impl<T: AsyncDrop + 'static> ops::Deref for DropLater<T> {
     type Target = T;
     fn deref(&self) -> &Self::Target {
-        self.value.as_ref().unwrap()
+        self.value.as_ref().expect("value is present until Drop")
     }
 }
 
 impl<T: AsyncDrop + 'static> ops::DerefMut for DropLater<T> {
     fn deref_mut(&mut self) -> &mut Self::Target {
-        self.value.as_mut().unwrap()
+        self.value.as_mut().expect("value is present until Drop")
     }
 }
 
 impl<T: AsyncDrop + std::fmt::Debug + 'static> std::fmt::Debug for DropLater<T> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("DropLater")
-            .field("value", &self.value)
-            .finish()
+        // Don't leak the internal Option representation — print the inner T.
+        f.debug_tuple("DropLater").field(&**self).finish()
     }
 }
 
@@ -295,6 +294,9 @@ pub mod ordering {
 
     /// Hold this in a dependent resource. When all clones are dropped, the
     /// associated [`DropWait`] completes.
+    ///
+    /// The inner sender is held solely for its `Drop` impl — closing the
+    /// channel is what releases the wait, so `dead_code` is expected.
     #[derive(Debug, Clone)]
     pub struct DropTrigger(#[allow(dead_code)] async_channel::Sender<()>);
 

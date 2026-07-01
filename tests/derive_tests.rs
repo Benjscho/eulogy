@@ -56,6 +56,7 @@ struct Diamond {
 struct SkipsOptOut {
     tracked: Tracker,
     #[eulogy(skip)]
+    #[allow(dead_code)]
     not_tracked: Tracker,
 }
 
