@@ -80,6 +80,22 @@ impl<T: AsyncDrop + 'static> DropLater<T> {
             dropper: Some(dropper),
         }
     }
+
+    /// Recover the inner value without running `async_drop`.
+    ///
+    /// The spawned drop task learns via a channel close that the value is
+    /// gone and exits cleanly — nothing leaks. Use this when you need to
+    /// hand ownership of `T` elsewhere and take responsibility for cleanup
+    /// yourself.
+    pub fn into_inner(mut self) -> T {
+        let value = self.value.take().expect("value is present until drop");
+        // Drop the sender explicitly so the spawned task's `rx.recv().await`
+        // resolves to Err and the task exits without touching `T`.
+        drop(self.dropper.take());
+        // Skip our Drop impl — its work is already done above.
+        std::mem::forget(self);
+        value
+    }
 }
 
 impl<T: AsyncDrop + 'static> Drop for DropLater<T> {

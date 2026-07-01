@@ -84,6 +84,24 @@ async fn drop_completes_before_task_exits() {
     assert_eq!(completed.load(Ordering::SeqCst), 1);
 }
 
+/// `into_inner` recovers the value without running async_drop.
+#[tokio::test]
+async fn into_inner_skips_async_drop() {
+    let count = Arc::new(AtomicU32::new(0));
+
+    let guard = later(Counter { drop_count: count.clone() });
+    let recovered = guard.into_inner();
+
+    // Give the spawned task a chance to notice the sender was dropped.
+    tokio::time::sleep(Duration::from_millis(50)).await;
+    assert_eq!(count.load(Ordering::SeqCst), 0, "async_drop must not run");
+
+    // We still hold `recovered` — sync drop when it goes out of scope. No leak.
+    drop(recovered);
+    tokio::time::sleep(Duration::from_millis(50)).await;
+    assert_eq!(count.load(Ordering::SeqCst), 0, "sync drop doesn't call async_drop either");
+}
+
 /// If the receiver task is gone (simulating runtime shutdown), Drop doesn't panic.
 #[tokio::test]
 async fn cancellation_does_not_panic() {
