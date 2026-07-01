@@ -79,6 +79,24 @@ pub trait Spawner {
 /// A guard that runs [`AsyncDrop`] on the contained value when dropped.
 ///
 /// Access the inner value via `Deref`/`DerefMut`.
+///
+/// # Ordering between sibling guards
+///
+/// Dropping guards in source order does **not** guarantee their `async_drop`
+/// futures execute in that order:
+///
+/// ```ignore
+/// let a = later(A { .. });
+/// let b = later(B { .. });
+/// drop(a);   // enqueues A for cleanup
+/// drop(b);   // enqueues B for cleanup
+/// // A's async_drop and B's async_drop may run in either order or interleaved
+/// ```
+///
+/// Each guard is cleaned up by its own spawned task; the runtime is free to
+/// schedule them however it likes. For a struct with fields that must be
+/// dropped in a specific order, use `#[derive(AsyncDrop)]` with
+/// `#[eulogy(after = [...])]`. For sibling guards, use [`ordering::setup`].
 #[must_use = "dropping the guard is what triggers async_drop — keep it alive until you want cleanup"]
 pub struct DropLater<T: AsyncDrop + 'static> {
     value: Option<T>,
