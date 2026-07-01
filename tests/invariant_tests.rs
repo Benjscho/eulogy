@@ -84,6 +84,31 @@ async fn drop_completes_before_task_exits() {
     assert_eq!(completed.load(Ordering::SeqCst), 1);
 }
 
+#[test]
+fn chain_endpoint_shape() {
+    use eulogy::ordering;
+
+    let empty = ordering::chain(0);
+    assert!(empty.is_empty());
+
+    let single = ordering::chain(1);
+    assert_eq!(single.len(), 1);
+    assert!(single[0].wait.is_none());
+    assert!(single[0].trigger.is_none());
+
+    let pair = ordering::chain(2);
+    assert_eq!(pair.len(), 2);
+    assert!(pair[0].wait.is_none());
+    assert!(pair[0].trigger.is_some());
+    assert!(pair[1].wait.is_some());
+    assert!(pair[1].trigger.is_none());
+
+    let triple = ordering::chain(3);
+    // Middle link has both.
+    assert!(triple[1].wait.is_some());
+    assert!(triple[1].trigger.is_some());
+}
+
 /// `into_inner` recovers the value without running async_drop.
 #[tokio::test]
 async fn into_inner_skips_async_drop() {
@@ -153,28 +178,18 @@ async fn ordering_under_contention() {
     let mut dropped_positions = Vec::new();
     let mut guards = Vec::new();
 
-    // Build a chain: resource[i] waits for resource[i-1] to drop.
-    // resource[i-1] holds the trigger, resource[i] holds the wait.
-    let mut triggers: Vec<Option<ordering::DropTrigger>> = Vec::new();
-    let mut waits: Vec<Option<ordering::DropWait>> = Vec::new();
-
-    waits.push(None); // First resource has no wait.
-    for _ in 0..9 {
-        let (wait, trigger) = ordering::setup();
-        triggers.push(Some(trigger));
-        waits.push(Some(wait));
-    }
-    triggers.push(None); // Last resource has no trigger to pass forward.
-
-    for i in 0..10u32 {
+    // ordering::chain sugars the boilerplate: each Link i has the wait for
+    // link i-1's trigger and the trigger that releases link i+1's wait.
+    let links = ordering::chain(10);
+    for link in links {
         let dropped_at = Arc::new(AtomicU32::new(0));
         dropped_positions.push(dropped_at.clone());
 
         let guard = later(Ordered {
             seq: seq.clone(),
             dropped_at,
-            wait: waits[i as usize].take(),
-            _trigger: triggers.get_mut(i as usize).and_then(|t| t.take()),
+            wait: link.wait,
+            _trigger: link.trigger,
         });
 
         guards.push(guard);
