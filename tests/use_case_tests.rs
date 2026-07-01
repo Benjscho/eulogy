@@ -1,5 +1,7 @@
 //! Tests modeled after real-world async drop use cases from the RCN thread.
 
+#![cfg(feature = "tokio")]
+
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
