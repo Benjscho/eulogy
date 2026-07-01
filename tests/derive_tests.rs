@@ -53,9 +53,9 @@ struct Diamond {
 }
 
 #[derive(Debug, AsyncDrop)]
-struct SkipsUnannotated {
-    #[eulogy]
+struct SkipsOptOut {
     tracked: Tracker,
+    #[eulogy(skip)]
     not_tracked: Tracker,
 }
 
@@ -123,12 +123,12 @@ async fn generic_field_gets_async_drop_bound() {
 }
 
 #[tokio::test]
-async fn unannotated_fields_skipped() {
+async fn skip_opts_out_of_async_drop() {
     let order = Arc::new(AtomicU32::new(0));
     let (tracked, tracked_at) = Tracker::new(order.clone());
     let (not_tracked, not_tracked_at) = Tracker::new(order.clone());
 
-    let guard = later(SkipsUnannotated {
+    let guard = later(SkipsOptOut {
         tracked,
         not_tracked,
     });
@@ -136,7 +136,7 @@ async fn unannotated_fields_skipped() {
     tokio::time::sleep(std::time::Duration::from_millis(50)).await;
 
     assert_eq!(tracked_at.load(Ordering::SeqCst), 1);
-    assert_eq!(not_tracked_at.load(Ordering::SeqCst), 0, "unannotated field should not have async_drop called");
+    assert_eq!(not_tracked_at.load(Ordering::SeqCst), 0, "#[eulogy(skip)] field should not have async_drop called");
     assert_eq!(order.load(Ordering::SeqCst), 1); // only one async_drop called
     assert_eq!(order.load(Ordering::SeqCst), 1); // only one async_drop called
 }

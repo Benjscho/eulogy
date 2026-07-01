@@ -29,7 +29,6 @@ impl AsyncDrop for TempDir {
 /// Child is dropped before parent because parent declares `after = [child]`.
 #[derive(Debug, AsyncDrop)]
 struct Deployment {
-    #[eulogy]
     child: TempDir,
 
     #[eulogy(after = [child])]

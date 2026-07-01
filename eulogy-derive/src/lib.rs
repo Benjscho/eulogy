@@ -2,6 +2,7 @@ use proc_macro::TokenStream;
 use proc_macro2::{Span, TokenStream as TokenStream2};
 use proc_macro_crate::{crate_name, FoundCrate};
 use quote::quote;
+use syn::spanned::Spanned;
 use syn::{parse_macro_input, parse_quote, DeriveInput, Data, Fields, Ident, Meta, Expr, ExprArray, Type, WhereClause};
 
 /// Resolve the path to the `eulogy` crate, honoring any rename via
@@ -21,24 +22,26 @@ fn eulogy_crate() -> TokenStream2 {
 
 /// Derive `AsyncDrop` for a struct.
 ///
-/// Annotate fields with `#[eulogy]` to have their `async_drop()` called.
-/// Use `#[eulogy(after = [field_a, field_b])]` to specify that a field
-/// should be dropped only after the listed fields have completed their drop.
+/// Every field is dropped by default — all field types must implement
+/// `AsyncDrop`. Opt out individual fields with `#[eulogy(skip)]`.
+/// Use `#[eulogy(after = [field_a, field_b])]` to enforce ordering: a
+/// field with `after` is dropped only once the listed fields finish.
 ///
 /// # Example
 ///
 /// ```ignore
 /// #[derive(AsyncDrop)]
 /// struct MyResource {
-///     #[eulogy]
 ///     child: ChildDir,
 ///     #[eulogy(after = [child])]
 ///     parent: ParentDir,
-///     name: String, // normal drop
+///     #[eulogy(skip)]
+///     name: String, // sync drop
 /// }
 /// ```
 ///
-/// Generates drop order: `child` first, then `parent`.
+/// Generates drop order: `child` first, then `parent`. `name` is dropped
+/// normally (synchronously) when the struct goes out of scope.
 #[proc_macro_derive(AsyncDrop, attributes(eulogy))]
 pub fn derive_async_drop(input: TokenStream) -> TokenStream {
     let input = parse_macro_input!(input as DeriveInput);
@@ -90,46 +93,65 @@ fn expand(input: &DeriveInput) -> syn::Result<TokenStream2> {
     let mut entries: Vec<Entry> = Vec::new();
 
     for f in fields.iter() {
-        let Some(attr) = f.attrs.iter().find(|a| a.path().is_ident("eulogy")) else {
-            continue;
-        };
         let ident = f.ident.clone().expect("named field");
         let ty = f.ty.clone();
-        let mut after = Vec::new();
+        let attr = f.attrs.iter().find(|a| a.path().is_ident("eulogy"));
 
-        if let Meta::List(_) = &attr.meta {
-            attr.parse_nested_meta(|meta| {
-                if meta.path.is_ident("after") {
-                    meta.input.parse::<syn::Token![=]>()?;
-                    let arr: ExprArray = meta.input.parse()?;
-                    for elem in &arr.elems {
-                        match elem {
-                            Expr::Path(p) => {
-                                if let Some(seg) = p.path.segments.last() {
-                                    after.push(seg.ident.clone());
-                                } else {
+        let mut after = Vec::new();
+        let mut skip = false;
+        let mut skip_span: Option<proc_macro2::Span> = None;
+        let mut after_span: Option<proc_macro2::Span> = None;
+
+        if let Some(attr) = attr {
+            if let Meta::List(_) = &attr.meta {
+                attr.parse_nested_meta(|meta| {
+                    if meta.path.is_ident("after") {
+                        after_span = Some(meta.path.span());
+                        meta.input.parse::<syn::Token![=]>()?;
+                        let arr: ExprArray = meta.input.parse()?;
+                        for elem in &arr.elems {
+                            match elem {
+                                Expr::Path(p) => {
+                                    if let Some(seg) = p.path.segments.last() {
+                                        after.push(seg.ident.clone());
+                                    } else {
+                                        return Err(syn::Error::new_spanned(
+                                            elem,
+                                            "expected a field name",
+                                        ));
+                                    }
+                                }
+                                other => {
                                     return Err(syn::Error::new_spanned(
-                                        elem,
-                                        "expected a field name",
+                                        other,
+                                        "expected a field name, not an expression",
                                     ));
                                 }
                             }
-                            other => {
-                                return Err(syn::Error::new_spanned(
-                                    other,
-                                    "expected a field name, not an expression",
-                                ));
-                            }
                         }
+                        Ok(())
+                    } else if meta.path.is_ident("skip") {
+                        skip = true;
+                        skip_span = Some(meta.path.span());
+                        Ok(())
+                    } else {
+                        Err(syn::Error::new_spanned(
+                            &meta.path,
+                            "unknown #[eulogy(...)] key — expected `after` or `skip`",
+                        ))
                     }
-                    Ok(())
-                } else {
-                    Err(syn::Error::new_spanned(
-                        &meta.path,
-                        "unknown #[eulogy(...)] key — expected `after`",
-                    ))
-                }
-            })?;
+                })?;
+            }
+        }
+
+        if skip {
+            if let (Some(skip_span), Some(_)) = (skip_span, after_span) {
+                return Err(syn::Error::new(
+                    skip_span,
+                    "`skip` cannot be combined with `after` — pick one",
+                ));
+            }
+            continue;
         }
 
         entries.push(Entry { ident, ty, after });
