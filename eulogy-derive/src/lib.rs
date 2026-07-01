@@ -185,14 +185,26 @@ fn expand(input: &DeriveInput) -> syn::Result<TokenStream2> {
         }
     }
 
-    let sorted = topo_sort(&entries)?;
-
-    let drop_calls: Vec<_> = sorted
-        .iter()
-        .map(|ident| quote! { self.#ident.async_drop().await; })
-        .collect();
-
     let krate = eulogy_crate();
+    let layers = topo_layers(&entries)?;
+
+    // Each layer is dropped concurrently, but a layer waits for the previous
+    // one to finish. Fields with no `after` deps end up in layer 0 together.
+    let layer_calls: Vec<TokenStream2> = layers
+        .iter()
+        .map(|layer| match layer.as_slice() {
+            [] => quote! {},
+            [single] => quote! { self.#single.async_drop().await; },
+            many => {
+                let futs = many.iter().map(|id| quote! { self.#id.async_drop() });
+                quote! {
+                    #krate::__private::join_all(vec![
+                        #( Box::pin(#futs) as ::std::pin::Pin<Box<dyn ::std::future::Future<Output = ()> + Send>> ),*
+                    ]).await;
+                }
+            }
+        })
+        .collect();
 
     // Synthesize `where Ty: eulogy::AsyncDrop` for each annotated field so users
     // with generic structs (`struct Wrapper<T> { #[eulogy] inner: T }`) don't
@@ -212,52 +224,65 @@ fn expand(input: &DeriveInput) -> syn::Result<TokenStream2> {
     Ok(quote! {
         impl #impl_generics #krate::AsyncDrop for #name #ty_generics #where_clause {
             async fn async_drop(self) {
-                #(#drop_calls)*
+                #(#layer_calls)*
             }
         }
     })
 }
 
-/// Topological sort: fields with no deps come first, fields with `after` come later.
-fn topo_sort(entries: &[Entry]) -> syn::Result<Vec<Ident>> {
+/// Group entries into topological layers via Kahn's algorithm.
+///
+/// Layer 0 contains all entries with no `after` deps; layer N contains
+/// entries whose deps are all in layers 0..N. Independent fields end up
+/// in the same layer and can be dropped concurrently.
+fn topo_layers(entries: &[Entry]) -> syn::Result<Vec<Vec<Ident>>> {
     let n = entries.len();
-    let mut visited = vec![false; n];
-    let mut in_stack = vec![false; n];
-    let mut order = Vec::with_capacity(n);
-
-    for i in 0..n {
-        visit(i, entries, &mut visited, &mut in_stack, &mut order)?;
-    }
-
-    Ok(order)
-}
-
-fn visit(
-    idx: usize,
-    entries: &[Entry],
-    visited: &mut [bool],
-    in_stack: &mut [bool],
-    order: &mut Vec<Ident>,
-) -> syn::Result<()> {
-    if visited[idx] {
-        return Ok(());
-    }
-    if in_stack[idx] {
-        return Err(syn::Error::new_spanned(
-            &entries[idx].ident,
-            "cycle detected in #[eulogy(after = [...])] dependencies",
-        ));
-    }
-    in_stack[idx] = true;
-
-    for dep in &entries[idx].after {
-        if let Some(dep_idx) = entries.iter().position(|e| &e.ident == dep) {
-            visit(dep_idx, entries, visited, in_stack, order)?;
+    // Remaining dep counts. A dep pointing at a field that isn't in `entries`
+    // (already rejected in validation) would not contribute; validation
+    // guarantees every dep resolves to some entry.
+    let mut remaining: Vec<usize> = entries.iter().map(|e| e.after.len()).collect();
+    // Reverse edges: dep_idx -> [entries that depend on dep_idx]
+    let mut children: Vec<Vec<usize>> = vec![Vec::new(); n];
+    for (i, e) in entries.iter().enumerate() {
+        for dep in &e.after {
+            let dep_idx = entries
+                .iter()
+                .position(|x| &x.ident == dep)
+                .expect("validated dep");
+            children[dep_idx].push(i);
         }
     }
 
-    in_stack[idx] = false;
-    visited[idx] = true;
-    order.push(entries[idx].ident.clone());
-    Ok(())
+    let mut layers: Vec<Vec<Ident>> = Vec::new();
+    let mut placed = vec![false; n];
+    let mut placed_count = 0;
+
+    loop {
+        let ready: Vec<usize> = (0..n)
+            .filter(|&i| !placed[i] && remaining[i] == 0)
+            .collect();
+        if ready.is_empty() {
+            break;
+        }
+        let idents: Vec<Ident> = ready.iter().map(|&i| entries[i].ident.clone()).collect();
+        for &i in &ready {
+            placed[i] = true;
+            placed_count += 1;
+            for &child in &children[i] {
+                remaining[child] -= 1;
+            }
+        }
+        layers.push(idents);
+    }
+
+    if placed_count != n {
+        // At least one entry was never placed — it must be in a cycle.
+        let stuck = (0..n).find(|&i| !placed[i]).expect("cycle exists");
+        return Err(syn::Error::new_spanned(
+            &entries[stuck].ident,
+            "cycle detected in #[eulogy(after = [...])] dependencies",
+        ));
+    }
+
+    Ok(layers)
 }

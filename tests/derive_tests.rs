@@ -66,8 +66,28 @@ struct Generic<T: std::fmt::Debug + Send> {
     inner: T,
 }
 
+// Two slow drops with no ordering; should run concurrently.
+#[derive(Debug)]
+struct SlowTracker {
+    delay: std::time::Duration,
+    done: Arc<AtomicU32>,
+}
+
+impl AsyncDrop for SlowTracker {
+    async fn async_drop(self) {
+        tokio::time::sleep(self.delay).await;
+        self.done.fetch_add(1, Ordering::SeqCst);
+    }
+}
+
+#[derive(Debug, AsyncDrop)]
+struct TwoSlow {
+    a: SlowTracker,
+    b: SlowTracker,
+}
+
 #[tokio::test]
-async fn no_deps_drops_in_declaration_order() {
+async fn no_deps_both_drop_concurrently() {
     let order = Arc::new(AtomicU32::new(0));
     let (a, a_at) = Tracker::new(order.clone());
     let (b, b_at) = Tracker::new(order.clone());
@@ -76,8 +96,11 @@ async fn no_deps_drops_in_declaration_order() {
     drop(guard);
     tokio::time::sleep(std::time::Duration::from_millis(50)).await;
 
-    assert_eq!(a_at.load(Ordering::SeqCst), 1);
-    assert_eq!(b_at.load(Ordering::SeqCst), 2);
+    // Both drop — order between independent fields is unspecified (they run in
+    // parallel), so we only assert that both fired.
+    assert!(a_at.load(Ordering::SeqCst) > 0);
+    assert!(b_at.load(Ordering::SeqCst) > 0);
+    assert_eq!(order.load(Ordering::SeqCst), 2);
 }
 
 #[tokio::test]
@@ -110,6 +133,32 @@ async fn diamond_deps() {
     // a and b dropped before last
     assert!(a_at.load(Ordering::SeqCst) < last_at.load(Ordering::SeqCst));
     assert!(b_at.load(Ordering::SeqCst) < last_at.load(Ordering::SeqCst));
+}
+
+#[tokio::test]
+async fn independent_slow_drops_run_concurrently() {
+    let done = Arc::new(AtomicU32::new(0));
+    let delay = std::time::Duration::from_millis(100);
+    let guard = later(TwoSlow {
+        a: SlowTracker { delay, done: done.clone() },
+        b: SlowTracker { delay, done: done.clone() },
+    });
+
+    let start = std::time::Instant::now();
+    drop(guard);
+
+    // If serial, this would need > 200ms. Give a generous margin for CI.
+    while done.load(Ordering::SeqCst) < 2 && start.elapsed() < std::time::Duration::from_millis(500) {
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+    }
+    let elapsed = start.elapsed();
+
+    assert_eq!(done.load(Ordering::SeqCst), 2);
+    assert!(
+        elapsed < std::time::Duration::from_millis(180),
+        "expected concurrent drop (< 2x delay), got {:?}",
+        elapsed
+    );
 }
 
 #[tokio::test]
