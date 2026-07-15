@@ -1,4 +1,4 @@
-#![cfg(feature = "tokio")]
+#![cfg(all(feature = "tokio", feature = "derive"))]
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, Ordering};
