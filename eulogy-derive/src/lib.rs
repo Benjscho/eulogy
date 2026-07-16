@@ -1,3 +1,14 @@
+//! Derive macro for [`eulogy::AsyncDrop`].
+//!
+//! Don't depend on this crate directly. Enable the `derive` feature on
+//! `eulogy`, which re-exports the macro:
+//!
+//! ```toml
+//! eulogy = { version = "0.1", features = ["tokio", "derive"] }
+//! ```
+//!
+//! See the [`AsyncDrop`] derive for the attribute reference and examples.
+
 use proc_macro::TokenStream;
 use proc_macro2::{Span, TokenStream as TokenStream2};
 use proc_macro_crate::{crate_name, FoundCrate};
@@ -29,36 +40,62 @@ fn eulogy_crate() -> TokenStream2 {
 
 /// Derive `AsyncDrop` for a struct or enum.
 ///
-/// Works on structs with named fields, tuple structs, and unit structs, and
-/// on enums (each variant is treated like an independent struct body). Every
-/// field is dropped by default — all field types must implement `AsyncDrop`.
-/// Opt out individual fields with `#[eulogy(skip)]`. Use
-/// `#[eulogy(after = [field_a, field_b])]` to enforce ordering: a field with
-/// `after` is dropped only once the listed fields finish. Tuple-struct fields
-/// are referenced by positional index (`after = [0, 1]`). For enums, `after`
-/// references are scoped to the enclosing variant — a field cannot reference
-/// a field in a different variant. Unions are not supported: there is no
-/// safe way to know which field is active, so the derive cannot know what to
-/// drop.
+/// Every field is dropped by default, and the generated `async_drop` runs
+/// independent fields concurrently. Add `#[eulogy(after = [...])]` to
+/// order fields, or `#[eulogy(skip)]` for fields whose types don't implement
+/// `AsyncDrop`.
 ///
-/// # Example
+/// # Attributes
 ///
-/// ```ignore
-/// #[derive(AsyncDrop)]
-/// struct MyResource {
-///     child: ChildDir,
-///     #[eulogy(after = [child])]
-///     parent: ParentDir,
-///     #[eulogy(skip)]
-///     name: String, // sync drop
+/// - `#[eulogy(after = [field, ...])]` — drop this field only after the
+///   listed fields have finished. Fields with no `after` deps and no
+///   dependents drop concurrently. Cycles are a compile error.
+/// - `#[eulogy(skip)]` — leave this field to its normal sync `Drop`. Use for
+///   any field whose type doesn't implement `AsyncDrop`.
+///
+/// # Structs
+///
+/// ```
+/// use eulogy::AsyncDrop;
+///
+/// struct Socket { id: u64 }
+/// impl AsyncDrop for Socket {
+///     async fn async_drop(self) { /* close */ }
+/// }
+///
+/// struct Logger;
+/// impl AsyncDrop for Logger {
+///     async fn async_drop(self) { /* flush */ }
 /// }
 ///
 /// #[derive(AsyncDrop)]
-/// struct TupleResource(ChildDir, #[eulogy(after = [0])] ParentDir);
+/// struct Connection {
+///     socket: Socket,
+///     // Flush the logger only after the socket has finished closing.
+///     #[eulogy(after = [socket])]
+///     logger: Logger,
+/// }
+/// ```
 ///
+/// Tuple structs work the same way; reference fields by position:
+///
+/// ```
+/// # use eulogy::AsyncDrop;
+/// # struct Socket; impl AsyncDrop for Socket { async fn async_drop(self) {} }
+/// # struct Logger; impl AsyncDrop for Logger { async fn async_drop(self) {} }
 /// #[derive(AsyncDrop)]
-/// struct Sentinel; // unit struct — async_drop is a no-op
+/// struct Connection(Socket, #[eulogy(after = [0])] Logger);
+/// ```
 ///
+/// # Enums
+///
+/// Each variant is treated like its own struct body — `after` references are
+/// scoped to the enclosing variant.
+///
+/// ```
+/// # use eulogy::AsyncDrop;
+/// # struct Socket; impl AsyncDrop for Socket { async fn async_drop(self) {} }
+/// # struct Logger; impl AsyncDrop for Logger { async fn async_drop(self) {} }
 /// #[derive(AsyncDrop)]
 /// enum Connection {
 ///     Tcp {
@@ -70,6 +107,51 @@ fn eulogy_crate() -> TokenStream2 {
 ///     Closed, // no fields — this arm is a no-op
 /// }
 /// ```
+///
+/// # Skipping fields
+///
+/// Types that don't implement `AsyncDrop` (e.g. third-party types, or your
+/// own sync-only types) need `#[eulogy(skip)]`. They'll be dropped
+/// synchronously via their normal `Drop` impl:
+///
+/// ```
+/// # use eulogy::AsyncDrop;
+/// # struct Socket; impl AsyncDrop for Socket { async fn async_drop(self) {} }
+/// struct Metrics; // no AsyncDrop impl
+///
+/// #[derive(AsyncDrop)]
+/// struct Connection {
+///     socket: Socket,
+///     #[eulogy(skip)]
+///     metrics: Metrics,
+/// }
+/// ```
+///
+/// Most standard-library value types (`String`, integers, `PathBuf`,
+/// `Option`, `Vec`, tuples up to 12, ...) already have a built-in
+/// `AsyncDrop` impl, so they don't need `skip`. See the `eulogy` crate for
+/// the full list.
+///
+/// # Generics
+///
+/// `T: AsyncDrop` bounds are added automatically for each non-skipped field
+/// type — you don't need to spell them out:
+///
+/// ```
+/// # use eulogy::AsyncDrop;
+/// #[derive(AsyncDrop)]
+/// struct Pair<A, B> {
+///     first: A,
+///     #[eulogy(after = [first])]
+///     second: B,
+/// }
+/// ```
+///
+/// # Unions
+///
+/// Not supported — there's no safe way for the derive to know which field is
+/// active, so it can't know what to drop. Attempting `#[derive(AsyncDrop)]`
+/// on a union is a compile error.
 #[proc_macro_derive(AsyncDrop, attributes(eulogy))]
 pub fn derive_async_drop(input: TokenStream) -> TokenStream {
     let input = parse_macro_input!(input as DeriveInput);
