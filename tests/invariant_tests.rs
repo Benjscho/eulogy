@@ -4,7 +4,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::Duration;
 
-use eulogy::{later, AsyncDrop};
+use eulogy::AsyncDrop;
 
 // -- Helpers --
 
@@ -38,7 +38,7 @@ impl AsyncDrop for SlowDrop {
 #[tokio::test]
 async fn drop_runs_exactly_once() {
     let count = Arc::new(AtomicU32::new(0));
-    let guard = later(Counter { drop_count: count.clone() });
+    let guard = Counter { drop_count: count.clone() }.later();
 
     // Move the guard into a new scope.
     let moved = guard;
@@ -53,9 +53,9 @@ async fn drop_runs_exactly_once() {
 async fn multiple_guards_each_drop_once() {
     let count = Arc::new(AtomicU32::new(0));
 
-    let g1 = later(Counter { drop_count: count.clone() });
-    let g2 = later(Counter { drop_count: count.clone() });
-    let g3 = later(Counter { drop_count: count.clone() });
+    let g1 = Counter { drop_count: count.clone() }.later();
+    let g2 = Counter { drop_count: count.clone() }.later();
+    let g3 = Counter { drop_count: count.clone() }.later();
 
     drop(g1);
     drop(g2);
@@ -70,10 +70,11 @@ async fn multiple_guards_each_drop_once() {
 async fn drop_completes_before_task_exits() {
     let completed = Arc::new(AtomicU32::new(0));
 
-    let guard = later(SlowDrop {
+    let guard = SlowDrop {
         completed: completed.clone(),
         delay: Duration::from_millis(100),
-    });
+    }
+    .later();
 
     drop(guard);
 
@@ -91,7 +92,7 @@ async fn drop_completes_before_task_exits() {
 async fn into_inner_skips_async_drop() {
     let count = Arc::new(AtomicU32::new(0));
 
-    let guard = later(Counter { drop_count: count.clone() });
+    let guard = Counter { drop_count: count.clone() }.later();
     let recovered = guard.into_inner();
 
     // Give the spawned task a chance to notice the sender was dropped.
@@ -120,7 +121,7 @@ async fn cancellation_does_not_panic() {
         }
     }
 
-    let guard = eulogy::later_with(Counter { drop_count: count.clone() }, &BlackHoleSpawner);
+    let guard = Counter { drop_count: count.clone() }.later_with(&BlackHoleSpawner);
     drop(guard); // Should not panic.
 
     tokio::time::sleep(Duration::from_millis(10)).await;
@@ -171,12 +172,13 @@ async fn ordering_under_contention() {
             (Some(w), Some(t))
         };
 
-        let guard = later(Ordered {
+        let guard = Ordered {
             seq: seq.clone(),
             dropped_at,
             wait: pending_wait.take(),
             _trigger: my_trigger,
-        });
+        }
+        .later();
         guards.push(guard);
         pending_wait = next_wait;
     }
@@ -244,18 +246,19 @@ async fn parent_waits_for_all_trigger_clones() {
     let seq = Arc::new(AtomicU32::new(0));
     let parent_cleaned = Arc::new(AtomicU32::new(0));
 
-    let parent = later(Parent {
+    let parent = Parent {
         wait: Some(wait),
         cleaned_up: parent_cleaned.clone(),
-    });
+    }
+    .later();
 
     let c1_at = Arc::new(AtomicU32::new(0));
     let c2_at = Arc::new(AtomicU32::new(0));
     let c3_at = Arc::new(AtomicU32::new(0));
 
-    let c1 = later(Child { _trigger: trigger.clone(), released_at: c1_at.clone(), seq: seq.clone() });
-    let c2 = later(Child { _trigger: trigger.clone(), released_at: c2_at.clone(), seq: seq.clone() });
-    let c3 = later(Child { _trigger: trigger, released_at: c3_at.clone(), seq: seq.clone() });
+    let c1 = Child { _trigger: trigger.clone(), released_at: c1_at.clone(), seq: seq.clone() }.later();
+    let c2 = Child { _trigger: trigger.clone(), released_at: c2_at.clone(), seq: seq.clone() }.later();
+    let c3 = Child { _trigger: trigger, released_at: c3_at.clone(), seq: seq.clone() }.later();
 
     // Drop parent first, then children. Parent's async_drop must block on
     // the wait until all three children have completed.

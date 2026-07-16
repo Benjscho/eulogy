@@ -3,7 +3,7 @@
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, Ordering};
 
-use eulogy::{later, AsyncDrop};
+use eulogy::AsyncDrop;
 
 /// Tracks the order in which fields are dropped via an atomic counter.
 #[derive(Debug)]
@@ -95,7 +95,7 @@ async fn no_deps_both_drop_concurrently() {
     let (a, a_at) = Tracker::new(order.clone());
     let (b, b_at) = Tracker::new(order.clone());
 
-    let guard = later(NoDeps { a, b });
+    let guard = NoDeps { a, b }.later();
     drop(guard);
     tokio::time::sleep(std::time::Duration::from_millis(50)).await;
 
@@ -113,7 +113,7 @@ async fn after_enforces_order() {
     let (second, second_at) = Tracker::new(order.clone());
     let (third, third_at) = Tracker::new(order.clone());
 
-    let guard = later(WithOrdering { first, second, third });
+    let guard = WithOrdering { first, second, third }.later();
     drop(guard);
     tokio::time::sleep(std::time::Duration::from_millis(50)).await;
 
@@ -129,7 +129,7 @@ async fn diamond_deps() {
     let (b, b_at) = Tracker::new(order.clone());
     let (last, last_at) = Tracker::new(order.clone());
 
-    let guard = later(Diamond { a, b, last });
+    let guard = Diamond { a, b, last }.later();
     drop(guard);
     tokio::time::sleep(std::time::Duration::from_millis(50)).await;
 
@@ -142,10 +142,11 @@ async fn diamond_deps() {
 async fn independent_slow_drops_run_concurrently() {
     let done = Arc::new(AtomicU32::new(0));
     let delay = std::time::Duration::from_millis(100);
-    let guard = later(TwoSlow {
+    let guard = TwoSlow {
         a: SlowTracker { delay, done: done.clone() },
         b: SlowTracker { delay, done: done.clone() },
-    });
+    }
+    .later();
 
     let start = std::time::Instant::now();
     drop(guard);
@@ -168,7 +169,7 @@ async fn independent_slow_drops_run_concurrently() {
 async fn generic_field_gets_async_drop_bound() {
     let order = Arc::new(AtomicU32::new(0));
     let (tracker, dropped_at) = Tracker::new(order.clone());
-    let guard = later(Generic { inner: tracker });
+    let guard = Generic { inner: tracker }.later();
     drop(guard);
     tokio::time::sleep(std::time::Duration::from_millis(50)).await;
     assert_eq!(dropped_at.load(Ordering::SeqCst), 1);
@@ -180,10 +181,11 @@ async fn skip_opts_out_of_async_drop() {
     let (tracked, tracked_at) = Tracker::new(order.clone());
     let (not_tracked, not_tracked_at) = Tracker::new(order.clone());
 
-    let guard = later(SkipsOptOut {
+    let guard = SkipsOptOut {
         tracked,
         not_tracked,
-    });
+    }
+    .later();
     drop(guard);
     tokio::time::sleep(std::time::Duration::from_millis(50)).await;
 

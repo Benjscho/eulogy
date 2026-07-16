@@ -7,7 +7,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::Duration;
 
-use eulogy::{later, AsyncDrop};
+use eulogy::AsyncDrop;
 
 #[derive(Debug)]
 struct Counter {
@@ -37,7 +37,7 @@ impl AsyncDrop for SlowDrop {
 fn drop_runs_once_smol() {
     smol::block_on(async {
         let count = Arc::new(AtomicU32::new(0));
-        let guard = later(Counter { count: count.clone() });
+        let guard = Counter { count: count.clone() }.later();
         drop(guard);
         smol::Timer::after(Duration::from_millis(50)).await;
         assert_eq!(count.load(Ordering::SeqCst), 1);
@@ -48,9 +48,9 @@ fn drop_runs_once_smol() {
 fn multiple_guards_smol() {
     smol::block_on(async {
         let count = Arc::new(AtomicU32::new(0));
-        let g1 = later(Counter { count: count.clone() });
-        let g2 = later(Counter { count: count.clone() });
-        let g3 = later(Counter { count: count.clone() });
+        let g1 = Counter { count: count.clone() }.later();
+        let g2 = Counter { count: count.clone() }.later();
+        let g3 = Counter { count: count.clone() }.later();
         drop(g1);
         drop(g2);
         drop(g3);
@@ -63,10 +63,11 @@ fn multiple_guards_smol() {
 fn slow_drop_completes_smol() {
     smol::block_on(async {
         let completed = Arc::new(AtomicU32::new(0));
-        let guard = later(SlowDrop {
+        let guard = SlowDrop {
             completed: completed.clone(),
             delay: Duration::from_millis(50),
-        });
+        }
+        .later();
         drop(guard);
         smol::Timer::after(Duration::from_millis(150)).await;
         assert_eq!(completed.load(Ordering::SeqCst), 1);
@@ -77,7 +78,7 @@ fn slow_drop_completes_smol() {
 fn into_inner_smol() {
     smol::block_on(async {
         let count = Arc::new(AtomicU32::new(0));
-        let guard = later(Counter { count: count.clone() });
+        let guard = Counter { count: count.clone() }.later();
         let _recovered = guard.into_inner();
         smol::Timer::after(Duration::from_millis(50)).await;
         assert_eq!(count.load(Ordering::SeqCst), 0);
@@ -101,10 +102,11 @@ mod derive_smol {
     fn derive_ordering_smol() {
         smol::block_on(async {
             let count = Arc::new(AtomicU32::new(0));
-            let guard = later(Parent {
+            let guard = Parent {
                 first: Counter { count: count.clone() },
                 second: Counter { count: count.clone() },
-            });
+            }
+            .later();
             drop(guard);
             smol::Timer::after(Duration::from_millis(50)).await;
             assert_eq!(count.load(Ordering::SeqCst), 2);

@@ -23,7 +23,8 @@
 //! The API is the same regardless of runtime:
 //!
 //! ```ignore
-//! let guard = eulogy::later(my_value);
+//! use eulogy::AsyncDrop;
+//! let guard = my_value.later();
 //! ```
 //!
 //! ## Ordering
@@ -67,11 +68,55 @@ pub use eulogy_derive::AsyncDrop;
 pub trait AsyncDrop: Send {
     /// Perform async cleanup, consuming the value.
     fn async_drop(self) -> impl Future<Output = ()> + Send;
+
+    /// Wrap `self` in a guard that runs [`async_drop`](Self::async_drop) when
+    /// the guard is dropped. Uses the runtime enabled via feature flag.
+    ///
+    /// # Panics
+    ///
+    /// Must be called from within a runtime context.
+    #[cfg(all(feature = "tokio", not(feature = "smol")))]
+    fn later(self) -> DropLater<Self>
+    where
+        Self: Sized + 'static,
+    {
+        self.later_with(&TokioSpawner)
+    }
+
+    /// Wrap `self` in a guard that runs [`async_drop`](Self::async_drop) when
+    /// the guard is dropped. Uses the runtime enabled via feature flag.
+    ///
+    /// # Panics
+    ///
+    /// Must be called from within a `smol` scope.
+    #[cfg(all(feature = "smol", not(feature = "tokio")))]
+    fn later(self) -> DropLater<Self>
+    where
+        Self: Sized + 'static,
+    {
+        self.later_with(&SmolSpawner)
+    }
+
+    /// Wrap `self` in a guard using a custom [`Spawner`].
+    fn later_with(self, spawner: &impl Spawner) -> DropLater<Self>
+    where
+        Self: Sized + 'static,
+    {
+        let (tx, rx) = async_channel::bounded(1);
+        let guard = DropLater::new(self, tx);
+        spawner.spawn(Box::pin(async move {
+            if let Ok(value) = rx.recv().await {
+                value.async_drop().await;
+            }
+        }));
+        guard
+    }
 }
 
 /// Spawns a future onto an async runtime.
 ///
-/// You can implement this to use a custom runtime with [`later_with`].
+/// You can implement this to use a custom runtime with
+/// [`AsyncDrop::later_with`].
 pub trait Spawner {
     fn spawn(&self, future: Pin<Box<dyn Future<Output = ()> + Send>>);
 }
@@ -86,8 +131,8 @@ pub trait Spawner {
 /// futures execute in that order:
 ///
 /// ```ignore
-/// let a = later(A { .. });
-/// let b = later(B { .. });
+/// let a = A { .. }.later();
+/// let b = B { .. }.later();
 /// drop(a);   // enqueues A for cleanup
 /// drop(b);   // enqueues B for cleanup
 /// // A's async_drop and B's async_drop may run in either order or interleaved
@@ -156,51 +201,6 @@ impl<T: AsyncDrop + std::fmt::Debug + 'static> std::fmt::Debug for DropLater<T> 
         // Don't leak the internal Option representation — print the inner T.
         f.debug_tuple("DropLater").field(&**self).finish()
     }
-}
-
-/// Wrap a value so its [`AsyncDrop`] runs when the guard is dropped.
-///
-/// Uses the runtime enabled via feature flag. Requires either the `tokio` or
-/// `smol` feature; without one of these, `later` is not defined and calls
-/// will fail to compile (use [`later_with`] for a custom [`Spawner`]).
-/// Libraries call this without caring which runtime the binary chose.
-///
-/// # Panics
-///
-/// Must be called from within a runtime context. With the `tokio` feature,
-/// calling this outside a `#[tokio::main]` / `#[tokio::test]` / `Runtime::block_on`
-/// scope panics with "there is no reactor running" — the same rule as
-/// `tokio::spawn`. Tests using `#[test]` instead of `#[tokio::test]` are the
-/// most common offender. Same caveat for `smol::spawn` under the `smol` feature.
-#[cfg(feature = "tokio")]
-pub fn later<T: AsyncDrop + 'static>(value: T) -> DropLater<T> {
-    later_with(value, &TokioSpawner)
-}
-
-/// Wrap a value so its [`AsyncDrop`] runs when the guard is dropped.
-///
-/// See the [`tokio`-flavored variant](later) for details. Defined when the
-/// `smol` feature is enabled and `tokio` is not.
-///
-/// # Panics
-///
-/// Must be called from within a `smol::block_on` (or `smol::Executor`) scope.
-#[cfg(all(feature = "smol", not(feature = "tokio")))]
-pub fn later<T: AsyncDrop + 'static>(value: T) -> DropLater<T> {
-    later_with(value, &SmolSpawner)
-}
-
-/// Wrap a value so its [`AsyncDrop`] runs when the guard is dropped,
-/// using a custom [`Spawner`].
-pub fn later_with<T: AsyncDrop + 'static>(value: T, spawner: &impl Spawner) -> DropLater<T> {
-    let (tx, rx) = async_channel::bounded(1);
-    let guard = DropLater::new(value, tx);
-    spawner.spawn(Box::pin(async move {
-        if let Ok(value) = rx.recv().await {
-            value.async_drop().await;
-        }
-    }));
-    guard
 }
 
 /// Runtime-agnostic helpers used by generated derive code. Not part of the

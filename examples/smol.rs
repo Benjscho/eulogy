@@ -2,7 +2,7 @@
 
 use std::path::PathBuf;
 
-use eulogy::{ordering, later, AsyncDrop};
+use eulogy::{ordering, AsyncDrop};
 
 #[derive(Debug)]
 struct TempDir {
@@ -55,15 +55,17 @@ fn main() {
     smol::block_on(async {
         let (wait, trigger) = ordering::setup();
 
-        let parent = later(Parent {
+        let parent = Parent {
             dir: TempDir::create("/tmp/eulogy-smol-example").await,
             wait,
-        });
+        }
+        .later();
 
-        let child = later(Child {
+        let child = Child {
             dir: TempDir::create("/tmp/eulogy-smol-example/subdir").await,
             _trigger: trigger,
-        });
+        }
+        .later();
 
         println!(
             "using dirs: {}, {}",

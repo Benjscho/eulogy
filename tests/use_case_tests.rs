@@ -6,7 +6,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
-use eulogy::{later, AsyncDrop};
+use eulogy::AsyncDrop;
 use tokio::sync::Mutex;
 
 // =============================================================================
@@ -46,7 +46,7 @@ impl AsyncDrop for BatchWriter {
 async fn flush_on_drop_no_data_loss() {
     let sink = Arc::new(Mutex::new(Vec::new()));
 
-    let mut writer = later(BatchWriter::new(sink.clone()));
+    let mut writer = BatchWriter::new(sink.clone()).later();
     writer.write("record-1".into());
     writer.write("record-2".into());
     writer.write("record-3".into());
@@ -103,10 +103,11 @@ impl AsyncDrop for Connection {
 async fn connection_recovery_on_incomplete_transaction() {
     let recovered = Arc::new(AtomicBool::new(false));
 
-    let conn = later(Connection {
+    let conn = Connection {
         vm: Some(MicroVm { recovered: recovered.clone() }),
         transaction_complete: false,
-    });
+    }
+    .later();
 
     // Simulate premature close.
     drop(conn);
@@ -119,10 +120,11 @@ async fn connection_recovery_on_incomplete_transaction() {
 async fn connection_clean_close_no_recovery() {
     let recovered = Arc::new(AtomicBool::new(false));
 
-    let mut conn = later(Connection {
+    let mut conn = Connection {
         vm: Some(MicroVm { recovered: recovered.clone() }),
         transaction_complete: false,
-    });
+    }
+    .later();
 
     // Mark transaction complete (would normally return VM to pool here).
     conn.transaction_complete = true;
@@ -181,7 +183,7 @@ impl AsyncDrop for SshBinary {
 async fn ssh_disconnect_on_drop() {
     let (session, connected, disconnect_called) = SshSession::new();
 
-    let binary = later(SshBinary { session: Some(session) });
+    let binary = SshBinary { session: Some(session) }.later();
 
     assert!(connected.load(Ordering::SeqCst));
     assert!(!disconnect_called.load(Ordering::SeqCst));
@@ -199,7 +201,7 @@ async fn ssh_already_disconnected() {
     // Simulate already disconnected.
     session.connected.store(false, Ordering::SeqCst);
 
-    let binary = later(SshBinary { session: Some(session) });
+    let binary = SshBinary { session: Some(session) }.later();
     drop(binary);
 
     tokio::time::sleep(Duration::from_millis(50)).await;
@@ -267,7 +269,7 @@ async fn transaction_rollback_on_drop() {
     let commands = Arc::new(Mutex::new(Vec::new()));
     let conn = Arc::new(FakeConnection { commands: commands.clone() });
 
-    let tx = later(Transaction::begin(conn.clone()).await);
+    let tx = Transaction::begin(conn.clone()).await.later();
 
     // Simulate: user forgets to commit, drops the transaction.
     drop(tx);
@@ -283,7 +285,7 @@ async fn transaction_no_rollback_after_commit() {
     let commands = Arc::new(Mutex::new(Vec::new()));
     let conn = Arc::new(FakeConnection { commands: commands.clone() });
 
-    let mut tx = later(Transaction::begin(conn.clone()).await);
+    let mut tx = Transaction::begin(conn.clone()).await.later();
     tx.commit().await;
     drop(tx);
 

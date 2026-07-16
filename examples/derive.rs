@@ -2,7 +2,7 @@
 
 use std::path::PathBuf;
 
-use eulogy::{later, AsyncDrop};
+use eulogy::AsyncDrop;
 
 #[derive(Debug)]
 struct TempDir {
@@ -40,7 +40,7 @@ async fn main() {
     let parent = TempDir::create("/tmp/eulogy-derive-example").await;
     let child = TempDir::create("/tmp/eulogy-derive-example/subdir").await;
 
-    let deployment = later(Deployment { child, parent });
+    let deployment = Deployment { child, parent }.later();
 
     println!("using: {}, {}", deployment.child.path.display(), deployment.parent.path.display());
 
