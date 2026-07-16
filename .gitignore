@@ -1,2 +1,3 @@
 **/target/
 stuff-to-fix.txt
+examples/library-poc/**/Cargo.lock
