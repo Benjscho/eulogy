@@ -89,6 +89,18 @@ struct TwoSlow {
     b: SlowTracker,
 }
 
+// Tuple struct with two independent fields.
+#[derive(Debug, AsyncDrop)]
+struct TupleNoDeps(Tracker, Tracker);
+
+// Tuple struct with positional ordering: field 1 waits on field 0.
+#[derive(Debug, AsyncDrop)]
+struct TupleOrdered(Tracker, #[eulogy(after = [0])] Tracker);
+
+// Unit struct — no fields, async_drop is a no-op.
+#[derive(Debug, AsyncDrop)]
+struct Sentinel;
+
 #[tokio::test]
 async fn no_deps_both_drop_concurrently() {
     let order = Arc::new(AtomicU32::new(0));
@@ -193,4 +205,43 @@ async fn skip_opts_out_of_async_drop() {
     assert_eq!(not_tracked_at.load(Ordering::SeqCst), 0, "#[eulogy(skip)] field should not have async_drop called");
     assert_eq!(order.load(Ordering::SeqCst), 1); // only one async_drop called
     assert_eq!(order.load(Ordering::SeqCst), 1); // only one async_drop called
+}
+
+#[tokio::test]
+async fn tuple_struct_no_deps() {
+    let order = Arc::new(AtomicU32::new(0));
+    let (a, a_at) = Tracker::new(order.clone());
+    let (b, b_at) = Tracker::new(order.clone());
+
+    let guard = TupleNoDeps(a, b).later();
+    drop(guard);
+    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+
+    assert!(a_at.load(Ordering::SeqCst) > 0);
+    assert!(b_at.load(Ordering::SeqCst) > 0);
+    assert_eq!(order.load(Ordering::SeqCst), 2);
+}
+
+#[tokio::test]
+async fn tuple_struct_after_index() {
+    let order = Arc::new(AtomicU32::new(0));
+    let (first, first_at) = Tracker::new(order.clone());
+    let (second, second_at) = Tracker::new(order.clone());
+
+    let guard = TupleOrdered(first, second).later();
+    drop(guard);
+    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+
+    // second declares `after = [0]`, so first drops before second.
+    assert_eq!(first_at.load(Ordering::SeqCst), 1);
+    assert_eq!(second_at.load(Ordering::SeqCst), 2);
+}
+
+#[tokio::test]
+async fn unit_struct_derive_compiles_and_runs() {
+    // No observable effect (no fields to drop), but the derived async_drop
+    // must exist and complete cleanly.
+    let guard = Sentinel.later();
+    drop(guard);
+    tokio::time::sleep(std::time::Duration::from_millis(20)).await;
 }

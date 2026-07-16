@@ -1,9 +1,12 @@
 use proc_macro::TokenStream;
 use proc_macro2::{Span, TokenStream as TokenStream2};
 use proc_macro_crate::{crate_name, FoundCrate};
-use quote::quote;
+use quote::{quote, ToTokens};
 use syn::spanned::Spanned;
-use syn::{parse_macro_input, parse_quote, DeriveInput, Data, Fields, Ident, Meta, Expr, ExprArray, Type, WhereClause};
+use syn::{
+    parse_macro_input, parse_quote, Data, DeriveInput, Expr, ExprArray, Fields, Ident, Index, Lit,
+    Member, Meta, Type, WhereClause,
+};
 
 /// Resolve the path to the `eulogy` crate, honoring any rename via
 /// `[dependencies] foo = { package = "eulogy" }`.
@@ -22,10 +25,12 @@ fn eulogy_crate() -> TokenStream2 {
 
 /// Derive `AsyncDrop` for a struct.
 ///
-/// Every field is dropped by default — all field types must implement
-/// `AsyncDrop`. Opt out individual fields with `#[eulogy(skip)]`.
-/// Use `#[eulogy(after = [field_a, field_b])]` to enforce ordering: a
-/// field with `after` is dropped only once the listed fields finish.
+/// Works on structs with named fields, tuple structs, and unit structs. Every
+/// field is dropped by default — all field types must implement `AsyncDrop`.
+/// Opt out individual fields with `#[eulogy(skip)]`. Use
+/// `#[eulogy(after = [field_a, field_b])]` to enforce ordering: a field with
+/// `after` is dropped only once the listed fields finish. Tuple-struct fields
+/// are referenced by positional index (`after = [0, 1]`).
 ///
 /// # Example
 ///
@@ -38,10 +43,13 @@ fn eulogy_crate() -> TokenStream2 {
 ///     #[eulogy(skip)]
 ///     name: String, // sync drop
 /// }
-/// ```
 ///
-/// Generates drop order: `child` first, then `parent`. `name` is dropped
-/// normally (synchronously) when the struct goes out of scope.
+/// #[derive(AsyncDrop)]
+/// struct TupleResource(ChildDir, #[eulogy(after = [0])] ParentDir);
+///
+/// #[derive(AsyncDrop)]
+/// struct Sentinel; // unit struct — async_drop is a no-op
+/// ```
 #[proc_macro_derive(AsyncDrop, attributes(eulogy))]
 pub fn derive_async_drop(input: TokenStream) -> TokenStream {
     let input = parse_macro_input!(input as DeriveInput);
@@ -52,30 +60,38 @@ pub fn derive_async_drop(input: TokenStream) -> TokenStream {
 }
 
 struct Entry {
-    ident: Ident,
+    member: Member,
     ty: Type,
-    after: Vec<Ident>,
+    after: Vec<Member>,
 }
 
 fn expand(input: &DeriveInput) -> syn::Result<TokenStream2> {
     let name = &input.ident;
     let generics = &input.generics;
 
-    let fields = match &input.data {
+    // Collapse Named / Unnamed / Unit into a single (Member, &Field) list.
+    let field_list: Vec<(Member, &syn::Field)> = match &input.data {
         Data::Struct(data) => match &data.fields {
-            Fields::Named(fields) => &fields.named,
-            Fields::Unnamed(_) => {
-                return Err(syn::Error::new_spanned(
-                    &input.ident,
-                    "#[derive(AsyncDrop)] does not support tuple structs — use a struct with named fields",
-                ));
-            }
-            Fields::Unit => {
-                return Err(syn::Error::new_spanned(
-                    &input.ident,
-                    "#[derive(AsyncDrop)] does not support unit structs — there are no fields to drop",
-                ));
-            }
+            Fields::Named(fields) => fields
+                .named
+                .iter()
+                .map(|f| (Member::Named(f.ident.clone().expect("named field")), f))
+                .collect(),
+            Fields::Unnamed(fields) => fields
+                .unnamed
+                .iter()
+                .enumerate()
+                .map(|(i, f)| {
+                    (
+                        Member::Unnamed(Index {
+                            index: i as u32,
+                            span: f.span(),
+                        }),
+                        f,
+                    )
+                })
+                .collect(),
+            Fields::Unit => Vec::new(),
         },
         Data::Enum(_) | Data::Union(_) => {
             return Err(syn::Error::new_spanned(
@@ -85,22 +101,18 @@ fn expand(input: &DeriveInput) -> syn::Result<TokenStream2> {
         }
     };
 
-    let all_field_names: Vec<Ident> = fields
-        .iter()
-        .filter_map(|f| f.ident.clone())
-        .collect();
+    let all_members: Vec<Member> = field_list.iter().map(|(m, _)| m.clone()).collect();
 
     let mut entries: Vec<Entry> = Vec::new();
 
-    for f in fields.iter() {
-        let ident = f.ident.clone().expect("named field");
+    for (member, f) in field_list.iter() {
         let ty = f.ty.clone();
         let attr = f.attrs.iter().find(|a| a.path().is_ident("eulogy"));
 
-        let mut after = Vec::new();
+        let mut after: Vec<Member> = Vec::new();
         let mut skip = false;
-        let mut skip_span: Option<proc_macro2::Span> = None;
-        let mut after_span: Option<proc_macro2::Span> = None;
+        let mut skip_span: Option<Span> = None;
+        let mut after_span: Option<Span> = None;
 
         if let Some(attr) = attr {
             if let Meta::List(_) = &attr.meta {
@@ -113,18 +125,32 @@ fn expand(input: &DeriveInput) -> syn::Result<TokenStream2> {
                             match elem {
                                 Expr::Path(p) => {
                                     if let Some(seg) = p.path.segments.last() {
-                                        after.push(seg.ident.clone());
+                                        after.push(Member::Named(seg.ident.clone()));
                                     } else {
                                         return Err(syn::Error::new_spanned(
                                             elem,
-                                            "expected a field name",
+                                            "expected a field name or index",
+                                        ));
+                                    }
+                                }
+                                Expr::Lit(lit_expr) => {
+                                    if let Lit::Int(int) = &lit_expr.lit {
+                                        let idx: u32 = int.base10_parse()?;
+                                        after.push(Member::Unnamed(Index {
+                                            index: idx,
+                                            span: int.span(),
+                                        }));
+                                    } else {
+                                        return Err(syn::Error::new_spanned(
+                                            elem,
+                                            "expected a field name or index",
                                         ));
                                     }
                                 }
                                 other => {
                                     return Err(syn::Error::new_spanned(
                                         other,
-                                        "expected a field name, not an expression",
+                                        "expected a field name or index",
                                     ));
                                 }
                             }
@@ -154,31 +180,38 @@ fn expand(input: &DeriveInput) -> syn::Result<TokenStream2> {
             continue;
         }
 
-        entries.push(Entry { ident, ty, after });
+        entries.push(Entry {
+            member: member.clone(),
+            ty,
+            after,
+        });
     }
 
     // Validate every `after` reference: it must name a field, that field must
-    // itself be annotated with #[eulogy], and it must not be self-referential.
+    // itself be annotated (not skipped), and it must not be self-referential.
     for entry in &entries {
         for dep in &entry.after {
-            if dep == &entry.ident {
-                return Err(syn::Error::new_spanned(
-                    dep,
-                    format!("`{}` cannot list itself in #[eulogy(after = [...])]", dep),
-                ));
-            }
-            if !all_field_names.iter().any(|f| f == dep) {
-                return Err(syn::Error::new_spanned(
-                    dep,
-                    format!("no field named `{}` in this struct", dep),
-                ));
-            }
-            if !entries.iter().any(|e| &e.ident == dep) {
+            if dep == &entry.member {
                 return Err(syn::Error::new_spanned(
                     dep,
                     format!(
-                        "field `{}` is not annotated with #[eulogy] — it cannot appear in an `after` list",
-                        dep
+                        "field `{}` cannot list itself in #[eulogy(after = [...])]",
+                        dep.to_token_stream()
+                    ),
+                ));
+            }
+            if !all_members.iter().any(|m| m == dep) {
+                return Err(syn::Error::new_spanned(
+                    dep,
+                    format!("no field `{}` in this struct", dep.to_token_stream()),
+                ));
+            }
+            if !entries.iter().any(|e| &e.member == dep) {
+                return Err(syn::Error::new_spanned(
+                    dep,
+                    format!(
+                        "field `{}` is skipped or unannotated — it cannot appear in an `after` list",
+                        dep.to_token_stream()
                     ),
                 ));
             }
@@ -196,7 +229,7 @@ fn expand(input: &DeriveInput) -> syn::Result<TokenStream2> {
             [] => quote! {},
             [single] => quote! { self.#single.async_drop().await; },
             many => {
-                let futs = many.iter().map(|id| quote! { self.#id.async_drop() });
+                let futs = many.iter().map(|m| quote! { self.#m.async_drop() });
                 quote! {
                     #krate::__private::join_all(vec![
                         #( Box::pin(#futs) as ::std::pin::Pin<Box<dyn ::std::future::Future<Output = ()> + Send>> ),*
@@ -235,11 +268,8 @@ fn expand(input: &DeriveInput) -> syn::Result<TokenStream2> {
 /// Layer 0 contains all entries with no `after` deps; layer N contains
 /// entries whose deps are all in layers 0..N. Independent fields end up
 /// in the same layer and can be dropped concurrently.
-fn topo_layers(entries: &[Entry]) -> syn::Result<Vec<Vec<Ident>>> {
+fn topo_layers(entries: &[Entry]) -> syn::Result<Vec<Vec<Member>>> {
     let n = entries.len();
-    // Remaining dep counts. A dep pointing at a field that isn't in `entries`
-    // (already rejected in validation) would not contribute; validation
-    // guarantees every dep resolves to some entry.
     let mut remaining: Vec<usize> = entries.iter().map(|e| e.after.len()).collect();
     // Reverse edges: dep_idx -> [entries that depend on dep_idx]
     let mut children: Vec<Vec<usize>> = vec![Vec::new(); n];
@@ -247,13 +277,13 @@ fn topo_layers(entries: &[Entry]) -> syn::Result<Vec<Vec<Ident>>> {
         for dep in &e.after {
             let dep_idx = entries
                 .iter()
-                .position(|x| &x.ident == dep)
+                .position(|x| &x.member == dep)
                 .expect("validated dep");
             children[dep_idx].push(i);
         }
     }
 
-    let mut layers: Vec<Vec<Ident>> = Vec::new();
+    let mut layers: Vec<Vec<Member>> = Vec::new();
     let mut placed = vec![false; n];
     let mut placed_count = 0;
 
@@ -264,7 +294,7 @@ fn topo_layers(entries: &[Entry]) -> syn::Result<Vec<Vec<Ident>>> {
         if ready.is_empty() {
             break;
         }
-        let idents: Vec<Ident> = ready.iter().map(|&i| entries[i].ident.clone()).collect();
+        let members: Vec<Member> = ready.iter().map(|&i| entries[i].member.clone()).collect();
         for &i in &ready {
             placed[i] = true;
             placed_count += 1;
@@ -272,14 +302,14 @@ fn topo_layers(entries: &[Entry]) -> syn::Result<Vec<Vec<Ident>>> {
                 remaining[child] -= 1;
             }
         }
-        layers.push(idents);
+        layers.push(members);
     }
 
     if placed_count != n {
         // At least one entry was never placed — it must be in a cycle.
         let stuck = (0..n).find(|&i| !placed[i]).expect("cycle exists");
         return Err(syn::Error::new_spanned(
-            &entries[stuck].ident,
+            &entries[stuck].member,
             "cycle detected in #[eulogy(after = [...])] dependencies",
         ));
     }
