@@ -14,3 +14,8 @@ quote = "1"
 syn = { version = "2", features = ["full"] }
 proc-macro2 = "1"
 proc-macro-crate = "3"
+
+[dev-dependencies]
+trybuild = "1"
+eulogy = { path = "..", features = ["derive", "tokio"] }
+tokio = { version = "1", features = ["full"] }

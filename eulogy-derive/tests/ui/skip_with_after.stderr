@@ -1,0 +1,5 @@
+error: `skip` cannot be combined with `after` — pick one
+  --> tests/ui/skip_with_after.rs:12:14
+   |
+12 |     #[eulogy(skip, after = [b])]
+   |              ^^^^

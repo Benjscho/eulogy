@@ -1,0 +1,5 @@
+error: cycle detected in #[eulogy(after = [...])] dependencies
+  --> tests/ui/after_cycle.rs:12:5
+   |
+12 |     a: Res,
+   |     ^

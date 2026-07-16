@@ -38,3 +38,8 @@ required-features = ["smol"]
 name = "derive"
 path = "examples/derive.rs"
 required-features = ["derive", "tokio"]
+
+[[example]]
+name = "derive_enum"
+path = "examples/derive_enum.rs"
+required-features = ["derive", "tokio"]

@@ -1,0 +1,5 @@
+error: no field `chld` in this struct
+  --> tests/ui/unknown_after_field.rs:12:23
+   |
+12 |     #[eulogy(after = [chld])]
+   |                       ^^^^
