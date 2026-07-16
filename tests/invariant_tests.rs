@@ -199,3 +199,85 @@ async fn ordering_under_contention() {
         );
     }
 }
+
+/// A parent holds one DropWait; three children each hold a clone of the same
+/// DropTrigger. The parent's async_drop must NOT complete until every child
+/// has dropped its trigger clone — i.e. all deps have finished.
+#[tokio::test]
+async fn parent_waits_for_all_trigger_clones() {
+    use eulogy::ordering;
+
+    #[derive(Debug)]
+    struct Parent {
+        wait: Option<ordering::DropWait>,
+        cleaned_up: Arc<AtomicU32>,
+    }
+
+    impl AsyncDrop for Parent {
+        async fn async_drop(self) {
+            if let Some(wait) = self.wait {
+                wait.wait().await;
+            }
+            self.cleaned_up.store(1, Ordering::SeqCst);
+        }
+    }
+
+    #[derive(Debug)]
+    struct Child {
+        _trigger: ordering::DropTrigger,
+        released_at: Arc<AtomicU32>,
+        seq: Arc<AtomicU32>,
+    }
+
+    impl AsyncDrop for Child {
+        async fn async_drop(self) {
+            // Simulate some async work before this child is done.
+            tokio::time::sleep(Duration::from_millis(20)).await;
+            let pos = self.seq.fetch_add(1, Ordering::SeqCst) + 1;
+            self.released_at.store(pos, Ordering::SeqCst);
+            // _trigger drops here — the parent's wait is only released when
+            // every child has hit this point.
+        }
+    }
+
+    let (wait, trigger) = ordering::setup();
+    let seq = Arc::new(AtomicU32::new(0));
+    let parent_cleaned = Arc::new(AtomicU32::new(0));
+
+    let parent = later(Parent {
+        wait: Some(wait),
+        cleaned_up: parent_cleaned.clone(),
+    });
+
+    let c1_at = Arc::new(AtomicU32::new(0));
+    let c2_at = Arc::new(AtomicU32::new(0));
+    let c3_at = Arc::new(AtomicU32::new(0));
+
+    let c1 = later(Child { _trigger: trigger.clone(), released_at: c1_at.clone(), seq: seq.clone() });
+    let c2 = later(Child { _trigger: trigger.clone(), released_at: c2_at.clone(), seq: seq.clone() });
+    let c3 = later(Child { _trigger: trigger, released_at: c3_at.clone(), seq: seq.clone() });
+
+    // Drop parent first, then children. Parent's async_drop must block on
+    // the wait until all three children have completed.
+    drop(parent);
+    drop(c1);
+    drop(c2);
+
+    // Two children released but one still alive → parent must NOT have completed.
+    tokio::time::sleep(Duration::from_millis(80)).await;
+    assert_eq!(
+        parent_cleaned.load(Ordering::SeqCst),
+        0,
+        "parent finished before all trigger clones dropped"
+    );
+
+    drop(c3);
+
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    assert_eq!(parent_cleaned.load(Ordering::SeqCst), 1, "parent should have cleaned up");
+
+    // All three children ran; each recorded a position 1..=3.
+    assert!(c1_at.load(Ordering::SeqCst) > 0);
+    assert!(c2_at.load(Ordering::SeqCst) > 0);
+    assert!(c3_at.load(Ordering::SeqCst) > 0);
+}
