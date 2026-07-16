@@ -1,11 +1,11 @@
 use proc_macro::TokenStream;
 use proc_macro2::{Span, TokenStream as TokenStream2};
 use proc_macro_crate::{crate_name, FoundCrate};
-use quote::{quote, ToTokens};
+use quote::{format_ident, quote, ToTokens};
 use syn::spanned::Spanned;
 use syn::{
     parse_macro_input, parse_quote, Data, DeriveInput, Expr, ExprArray, Fields, Ident, Index, Lit,
-    Member, Meta, Type, WhereClause,
+    Member, Meta, Type, Variant, WhereClause,
 };
 
 /// Resolve the path to the `eulogy` crate, honoring any rename via
@@ -23,14 +23,19 @@ fn eulogy_crate() -> TokenStream2 {
     }
 }
 
-/// Derive `AsyncDrop` for a struct.
+/// Derive `AsyncDrop` for a struct or enum.
 ///
-/// Works on structs with named fields, tuple structs, and unit structs. Every
+/// Works on structs with named fields, tuple structs, and unit structs, and
+/// on enums (each variant is treated like an independent struct body). Every
 /// field is dropped by default — all field types must implement `AsyncDrop`.
 /// Opt out individual fields with `#[eulogy(skip)]`. Use
 /// `#[eulogy(after = [field_a, field_b])]` to enforce ordering: a field with
 /// `after` is dropped only once the listed fields finish. Tuple-struct fields
-/// are referenced by positional index (`after = [0, 1]`).
+/// are referenced by positional index (`after = [0, 1]`). For enums, `after`
+/// references are scoped to the enclosing variant — a field cannot reference
+/// a field in a different variant. Unions are not supported: there is no
+/// safe way to know which field is active, so the derive cannot know what to
+/// drop.
 ///
 /// # Example
 ///
@@ -49,6 +54,17 @@ fn eulogy_crate() -> TokenStream2 {
 ///
 /// #[derive(AsyncDrop)]
 /// struct Sentinel; // unit struct — async_drop is a no-op
+///
+/// #[derive(AsyncDrop)]
+/// enum Connection {
+///     Tcp {
+///         sock: Socket,
+///         #[eulogy(after = [sock])]
+///         logger: Logger,
+///     },
+///     Unix(Socket),
+///     Closed, // no fields — this arm is a no-op
+/// }
 /// ```
 #[proc_macro_derive(AsyncDrop, attributes(eulogy))]
 pub fn derive_async_drop(input: TokenStream) -> TokenStream {
@@ -65,44 +81,35 @@ struct Entry {
     after: Vec<Member>,
 }
 
-fn expand(input: &DeriveInput) -> syn::Result<TokenStream2> {
-    let name = &input.ident;
-    let generics = &input.generics;
+/// Collapse Named / Unnamed / Unit fields into a single (Member, &Field) list.
+fn collect_field_list(fields: &Fields) -> Vec<(Member, &syn::Field)> {
+    match fields {
+        Fields::Named(fields) => fields
+            .named
+            .iter()
+            .map(|f| (Member::Named(f.ident.clone().expect("named field")), f))
+            .collect(),
+        Fields::Unnamed(fields) => fields
+            .unnamed
+            .iter()
+            .enumerate()
+            .map(|(i, f)| {
+                (
+                    Member::Unnamed(Index {
+                        index: i as u32,
+                        span: f.span(),
+                    }),
+                    f,
+                )
+            })
+            .collect(),
+        Fields::Unit => Vec::new(),
+    }
+}
 
-    // Collapse Named / Unnamed / Unit into a single (Member, &Field) list.
-    let field_list: Vec<(Member, &syn::Field)> = match &input.data {
-        Data::Struct(data) => match &data.fields {
-            Fields::Named(fields) => fields
-                .named
-                .iter()
-                .map(|f| (Member::Named(f.ident.clone().expect("named field")), f))
-                .collect(),
-            Fields::Unnamed(fields) => fields
-                .unnamed
-                .iter()
-                .enumerate()
-                .map(|(i, f)| {
-                    (
-                        Member::Unnamed(Index {
-                            index: i as u32,
-                            span: f.span(),
-                        }),
-                        f,
-                    )
-                })
-                .collect(),
-            Fields::Unit => Vec::new(),
-        },
-        Data::Enum(_) | Data::Union(_) => {
-            return Err(syn::Error::new_spanned(
-                &input.ident,
-                "#[derive(AsyncDrop)] only supports structs",
-            ));
-        }
-    };
-
-    let all_members: Vec<Member> = field_list.iter().map(|(m, _)| m.clone()).collect();
-
+/// Parse `#[eulogy(...)]` attributes for a field list, returning the entries
+/// that should be async-dropped (i.e. not `#[eulogy(skip)]`).
+fn parse_entries(field_list: &[(Member, &syn::Field)]) -> syn::Result<Vec<Entry>> {
     let mut entries: Vec<Entry> = Vec::new();
 
     for (member, f) in field_list.iter() {
@@ -187,9 +194,15 @@ fn expand(input: &DeriveInput) -> syn::Result<TokenStream2> {
         });
     }
 
-    // Validate every `after` reference: it must name a field, that field must
-    // itself be annotated (not skipped), and it must not be self-referential.
-    for entry in &entries {
+    Ok(entries)
+}
+
+/// Validate every `after` reference within one struct/variant's field list:
+/// it must name a field, that field must itself be annotated (not skipped),
+/// and it must not be self-referential. `container_desc` names the container
+/// for error messages (e.g. "this struct" or "variant `Bar`").
+fn validate_after_refs(entries: &[Entry], all_members: &[Member], container_desc: &str) -> syn::Result<()> {
+    for entry in entries {
         for dep in &entry.after {
             if dep == &entry.member {
                 return Err(syn::Error::new_spanned(
@@ -203,7 +216,7 @@ fn expand(input: &DeriveInput) -> syn::Result<TokenStream2> {
             if !all_members.iter().any(|m| m == dep) {
                 return Err(syn::Error::new_spanned(
                     dep,
-                    format!("no field `{}` in this struct", dep.to_token_stream()),
+                    format!("no field `{}` in {container_desc}", dep.to_token_stream()),
                 ));
             }
             if !entries.iter().any(|e| &e.member == dep) {
@@ -217,50 +230,7 @@ fn expand(input: &DeriveInput) -> syn::Result<TokenStream2> {
             }
         }
     }
-
-    let krate = eulogy_crate();
-    let layers = topo_layers(&entries)?;
-
-    // Each layer is dropped concurrently, but a layer waits for the previous
-    // one to finish. Fields with no `after` deps end up in layer 0 together.
-    let layer_calls: Vec<TokenStream2> = layers
-        .iter()
-        .map(|layer| match layer.as_slice() {
-            [] => quote! {},
-            [single] => quote! { self.#single.async_drop().await; },
-            many => {
-                let futs = many.iter().map(|m| quote! { self.#m.async_drop() });
-                quote! {
-                    #krate::__private::join_all(vec![
-                        #( Box::pin(#futs) as ::std::pin::Pin<Box<dyn ::std::future::Future<Output = ()> + Send>> ),*
-                    ]).await;
-                }
-            }
-        })
-        .collect();
-
-    // Synthesize `where Ty: eulogy::AsyncDrop` for each annotated field so users
-    // with generic structs (`struct Wrapper<T> { #[eulogy] inner: T }`) don't
-    // need to spell the bound out themselves.
-    let (impl_generics, ty_generics, existing_where) = generics.split_for_impl();
-    let mut where_clause: WhereClause = match existing_where {
-        Some(w) => w.clone(),
-        None => parse_quote!(where),
-    };
-    for entry in &entries {
-        let ty = &entry.ty;
-        where_clause
-            .predicates
-            .push(parse_quote!(#ty: #krate::AsyncDrop));
-    }
-
-    Ok(quote! {
-        impl #impl_generics #krate::AsyncDrop for #name #ty_generics #where_clause {
-            async fn async_drop(self) {
-                #(#layer_calls)*
-            }
-        }
-    })
+    Ok(())
 }
 
 /// Group entries into topological layers via Kahn's algorithm.
@@ -315,4 +285,164 @@ fn topo_layers(entries: &[Entry]) -> syn::Result<Vec<Vec<Member>>> {
     }
 
     Ok(layers)
+}
+
+/// Emit the `.async_drop().await` calls for each topological layer. `accessor`
+/// turns a `Member` into the expression used to reach that field's value —
+/// `self.field` for a struct, or a locally bound identifier inside an enum
+/// match arm.
+fn layer_calls(
+    layers: &[Vec<Member>],
+    krate: &TokenStream2,
+    accessor: impl Fn(&Member) -> TokenStream2,
+) -> Vec<TokenStream2> {
+    layers
+        .iter()
+        .map(|layer| match layer.as_slice() {
+            [] => quote! {},
+            [single] => {
+                let acc = accessor(single);
+                quote! { #acc.async_drop().await; }
+            }
+            many => {
+                let futs = many.iter().map(|m| {
+                    let acc = accessor(m);
+                    quote! { #acc.async_drop() }
+                });
+                quote! {
+                    #krate::__private::join_all(vec![
+                        #( Box::pin(#futs) as ::std::pin::Pin<Box<dyn ::std::future::Future<Output = ()> + Send>> ),*
+                    ]).await;
+                }
+            }
+        })
+        .collect()
+}
+
+/// Synthesize `where Ty: eulogy::AsyncDrop` for each annotated entry, so
+/// users with generic structs/enums don't need to spell the bound out
+/// themselves.
+fn push_where_bounds(where_clause: &mut WhereClause, entries: &[Entry], krate: &TokenStream2) {
+    for entry in entries {
+        let ty = &entry.ty;
+        where_clause
+            .predicates
+            .push(parse_quote!(#ty: #krate::AsyncDrop));
+    }
+}
+
+/// The identifier a field is bound to inside an enum match arm. Named fields
+/// keep their own name (so struct-pattern shorthand works); positional
+/// tuple fields get a synthetic name since `0`, `1`, ... aren't valid
+/// identifiers.
+fn binding_ident(member: &Member) -> Ident {
+    match member {
+        Member::Named(ident) => ident.clone(),
+        Member::Unnamed(index) => format_ident!("__eulogy_field_{}", index.index),
+    }
+}
+
+/// Build the match-arm pattern for one enum variant. Fields not present in
+/// `entry_members` (i.e. `#[eulogy(skip)]` or unannotated) are ignored via
+/// `..` for named fields, or bound to `_` for positional tuple fields (named
+/// patterns match by name so a single trailing `..` suffices; tuple patterns
+/// are positional, so every slot must be listed explicitly).
+fn variant_pattern(
+    enum_name: &Ident,
+    variant: &Variant,
+    field_list: &[(Member, &syn::Field)],
+    entry_members: &[Member],
+) -> TokenStream2 {
+    let variant_ident = &variant.ident;
+    let path = quote! { #enum_name::#variant_ident };
+
+    match &variant.fields {
+        Fields::Named(_) => {
+            let bindings = field_list.iter().filter_map(|(m, _)| {
+                if entry_members.contains(m) {
+                    Some(quote! { #m })
+                } else {
+                    None
+                }
+            });
+            quote! { #path { #(#bindings,)* .. } }
+        }
+        Fields::Unnamed(_) => {
+            let positions = field_list.iter().map(|(m, _)| {
+                if entry_members.contains(m) {
+                    let ident = binding_ident(m);
+                    quote! { #ident }
+                } else {
+                    quote! { _ }
+                }
+            });
+            quote! { #path ( #(#positions,)* ) }
+        }
+        Fields::Unit => path,
+    }
+}
+
+fn expand(input: &DeriveInput) -> syn::Result<TokenStream2> {
+    let name = &input.ident;
+    let generics = &input.generics;
+    let krate = eulogy_crate();
+
+    let (impl_generics, ty_generics, existing_where) = generics.split_for_impl();
+    let mut where_clause: WhereClause = match existing_where {
+        Some(w) => w.clone(),
+        None => parse_quote!(where),
+    };
+
+    let body = match &input.data {
+        Data::Struct(data) => {
+            let field_list = collect_field_list(&data.fields);
+            let all_members: Vec<Member> = field_list.iter().map(|(m, _)| m.clone()).collect();
+            let entries = parse_entries(&field_list)?;
+            validate_after_refs(&entries, &all_members, "this struct")?;
+            push_where_bounds(&mut where_clause, &entries, &krate);
+            let layers = topo_layers(&entries)?;
+            let calls = layer_calls(&layers, &krate, |m| quote! { self.#m });
+            quote! { #(#calls)* }
+        }
+        Data::Enum(data) => {
+            let mut arms: Vec<TokenStream2> = Vec::new();
+            for variant in &data.variants {
+                let field_list = collect_field_list(&variant.fields);
+                let all_members: Vec<Member> = field_list.iter().map(|(m, _)| m.clone()).collect();
+                let entries = parse_entries(&field_list)?;
+                let container_desc = format!("variant `{}`", variant.ident);
+                validate_after_refs(&entries, &all_members, &container_desc)?;
+                push_where_bounds(&mut where_clause, &entries, &krate);
+                let layers = topo_layers(&entries)?;
+
+                let entry_members: Vec<Member> = entries.iter().map(|e| e.member.clone()).collect();
+                let pattern = variant_pattern(name, variant, &field_list, &entry_members);
+                let calls = layer_calls(&layers, &krate, |m| {
+                    let ident = binding_ident(m);
+                    quote! { #ident }
+                });
+                arms.push(quote! { #pattern => { #(#calls)* } });
+            }
+            quote! {
+                match self {
+                    #(#arms)*
+                }
+            }
+        }
+        Data::Union(_) => {
+            return Err(syn::Error::new_spanned(
+                &input.ident,
+                "#[derive(AsyncDrop)] does not support unions — there is no safe way to \
+                 know which field is active, so the derive cannot know what to drop",
+            ));
+        }
+    };
+
+    Ok(quote! {
+        impl #impl_generics #krate::AsyncDrop for #name #ty_generics #where_clause {
+            async fn async_drop(self) {
+                #body
+            }
+        }
+    })
 }
