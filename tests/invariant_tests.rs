@@ -86,31 +86,6 @@ async fn drop_completes_before_task_exits() {
     assert_eq!(completed.load(Ordering::SeqCst), 1);
 }
 
-#[test]
-fn chain_endpoint_shape() {
-    use eulogy::ordering;
-
-    let empty = ordering::chain(0);
-    assert!(empty.is_empty());
-
-    let single = ordering::chain(1);
-    assert_eq!(single.len(), 1);
-    assert!(single[0].wait.is_none());
-    assert!(single[0].trigger.is_none());
-
-    let pair = ordering::chain(2);
-    assert_eq!(pair.len(), 2);
-    assert!(pair[0].wait.is_none());
-    assert!(pair[0].trigger.is_some());
-    assert!(pair[1].wait.is_some());
-    assert!(pair[1].trigger.is_none());
-
-    let triple = ordering::chain(3);
-    // Middle link has both.
-    assert!(triple[1].wait.is_some());
-    assert!(triple[1].trigger.is_some());
-}
-
 /// `into_inner` recovers the value without running async_drop.
 #[tokio::test]
 async fn into_inner_skips_async_drop() {
@@ -176,25 +151,34 @@ async fn ordering_under_contention() {
         }
     }
 
+    const N: usize = 10;
     let seq = Arc::new(AtomicU32::new(0));
     let mut dropped_positions = Vec::new();
     let mut guards = Vec::new();
 
-    // ordering::chain sugars the boilerplate: each Link i has the wait for
-    // link i-1's trigger and the trigger that releases link i+1's wait.
-    let links = ordering::chain(10);
-    for link in links {
+    // Build a linear chain of N resources: resource i waits on resource i-1's
+    // trigger. Each iteration creates a fresh (wait, trigger) pair and hands
+    // the wait forward to the next iteration.
+    let mut pending_wait: Option<ordering::DropWait> = None;
+    for i in 0..N {
         let dropped_at = Arc::new(AtomicU32::new(0));
         dropped_positions.push(dropped_at.clone());
+
+        let (next_wait, my_trigger) = if i == N - 1 {
+            (None, None)
+        } else {
+            let (w, t) = ordering::setup();
+            (Some(w), Some(t))
+        };
 
         let guard = later(Ordered {
             seq: seq.clone(),
             dropped_at,
-            wait: link.wait,
-            _trigger: link.trigger,
+            wait: pending_wait.take(),
+            _trigger: my_trigger,
         });
-
         guards.push(guard);
+        pending_wait = next_wait;
     }
 
     // Drop all at once (reverse order to stress ordering).
