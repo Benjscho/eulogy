@@ -47,6 +47,8 @@ compile_error!(
 #[cfg(feature = "derive")]
 pub use eulogy_derive::AsyncDrop;
 
+mod std_impls;
+
 /// A type that can perform async cleanup.
 pub trait AsyncDrop: Send {
     /// Perform async cleanup, consuming the value.
