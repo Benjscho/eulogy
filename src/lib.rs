@@ -7,7 +7,7 @@
 //!
 //! ## Usage
 //!
-//! Enable exactly one runtime feature in your final binary:
+//! Enable the runtime feature that you need:
 //!
 //! ```toml
 //! eulogy = { version = "0.1", features = ["tokio"] }
@@ -38,9 +38,8 @@ use std::ops;
 
 #[cfg(all(feature = "tokio", feature = "smol"))]
 compile_error!(
-    "eulogy: enable only one of `tokio` or `smol` — both runtimes active in the \
-     same binary means later() silently picks tokio and any smol-context drop \
-     panics. If a transitive dep is enabling the other feature, disable its \
+    "eulogy: enable only one of `tokio` or `smol` \
+     If a transitive dep is enabling the other feature, disable its \
      default features."
 );
 
@@ -48,23 +47,7 @@ compile_error!(
 #[cfg(feature = "derive")]
 pub use eulogy_derive::AsyncDrop;
 
-/// A type that requires async cleanup.
-///
-/// # Requirements
-///
-/// The trait requires `Send`; [`later`]/[`later_with`] additionally require
-/// `'static`. Both are needed to move the value into a spawned task on the
-/// runtime executor. This means:
-///
-/// - `!Send` types like `Rc<T>`, non-Send I/O handles, or values holding
-///   raw pointers can't use [`later`]. There is currently no `LocalAsyncDrop`
-///   variant — single-threaded / `LocalSet`-only cleanup is not supported.
-/// - Non-`'static` values (anything borrowing) can't be wrapped in a guard.
-///   Own the data, or `Arc` it before wrapping.
-///
-/// If either constraint is a blocker for you, implement [`Spawner`] yourself
-/// and reach for [`later_with`] — the `AsyncDrop` trait itself only needs
-/// `Send` today, but that may loosen further.
+/// A type that can perform async cleanup.
 pub trait AsyncDrop: Send {
     /// Perform async cleanup, consuming the value.
     fn async_drop(self) -> impl Future<Output = ()> + Send;
