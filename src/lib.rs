@@ -278,7 +278,7 @@ pub mod ordering {
     /// Create a linked `(DropWait, DropTrigger)` pair.
     pub fn setup() -> (DropWait, DropTrigger) {
         let (tx, rx) = async_channel::bounded(1);
-        (DropWait(rx), DropTrigger(tx))
+        (DropWait(rx), DropTrigger { _closer: tx })
     }
 
     /// Awaits until all associated [`DropTrigger`]s have been dropped.
@@ -294,9 +294,10 @@ pub mod ordering {
 
     /// Hold this in a dependent resource. When all clones are dropped, the
     /// associated [`DropWait`] completes.
-    ///
-    /// The inner sender is held solely for its `Drop` impl — closing the
-    /// channel is what releases the wait, so `dead_code` is expected.
     #[derive(Debug, Clone)]
-    pub struct DropTrigger(#[allow(dead_code)] async_channel::Sender<()>);
+    pub struct DropTrigger {
+        // Held solely for its Drop impl: when the last clone drops, the channel
+        // closes and the paired DropWait resolves.
+        _closer: async_channel::Sender<()>,
+    }
 }
