@@ -7,30 +7,163 @@
 //!
 //! ## Usage
 //!
-//! Enable the runtime feature that you need:
+//! Enable the runtime feature that matches your app:
 //!
 //! ```toml
 //! eulogy = { version = "0.1", features = ["tokio"] }
 //! ```
 //!
-//! Libraries should depend on `eulogy` with no features — the binary picks
-//! the runtime:
+//! Implement [`AsyncDrop`] for your type, then call [`AsyncDrop::later`] to
+//! get a guard that runs cleanup when it's dropped:
+//!
+//! ```
+//! # #[cfg(all(feature = "tokio", not(feature = "smol")))] {
+//! use eulogy::AsyncDrop;
+//!
+//! struct Connection {
+//!     id: u64,
+//! }
+//!
+//! impl AsyncDrop for Connection {
+//!     async fn async_drop(self) {
+//!         // e.g. self.close().await;
+//!         println!("closing {}", self.id);
+//!     }
+//! }
+//!
+//! # tokio::runtime::Runtime::new().unwrap().block_on(async {
+//! let conn = Connection { id: 1 }.later();
+//! // ...use `conn` via Deref/DerefMut...
+//! drop(conn); // drops the connection async
+//! # });
+//! # }
+//! ```
+//!
+//! ### Deriving `AsyncDrop`
+//!
+//! Instead of manually implementing on each struct, you can derive AsyncDrop
+//! for any structs whose fields all implement it. You can use 
+//! `#[eulogy(after = [...])]` to enforce drop ordering between fields:
 //!
 //! ```toml
-//! eulogy = "0.1"
+//! eulogy = { version = "0.1", features = ["tokio", "derive"] }
 //! ```
 //!
-//! The API is the same regardless of runtime:
-//!
-//! ```ignore
+//! ```
+//! # #[cfg(all(feature = "tokio", not(feature = "smol"), feature = "derive"))] {
 //! use eulogy::AsyncDrop;
-//! let guard = my_value.later();
+//!
+//! struct Socket { id: u64 }
+//! impl AsyncDrop for Socket {
+//!     async fn async_drop(self) { /* close */ }
+//! }
+//!
+//! struct Logger { name: String }
+//! impl AsyncDrop for Logger {
+//!     async fn async_drop(self) { /* flush */ }
+//! }
+//!
+//! #[derive(AsyncDrop)]
+//! struct Connection {
+//!     socket: Socket,
+//!     // Wait for `socket` to close before flushing the logger.
+//!     #[eulogy(after = [socket])]
+//!     logger: Logger,
+//! }
+//!
+//! # tokio::runtime::Runtime::new().unwrap().block_on(async {
+//! let conn = Connection {
+//!     socket: Socket { id: 1 },
+//!     logger: Logger { name: "audit".into() },
+//! }
+//! .later();
+//! drop(conn);
+//! # });
+//! # }
 //! ```
+//!
+//! For fields that don't (or shouldn't) implement `AsyncDrop`, annotate them
+//! with `#[eulogy(skip)]`.
+//!
+//! ### Libraries
+//!
+//! Library authors can use `AsyncDrop` without picking a runtime. Just
+//! implement the trait and call `.later()` — the same code works whether
+//! the final binary enables `tokio` or `smol`:
+//!
+//! ```
+//! # #[cfg(all(any(feature = "tokio", feature = "smol"), not(all(feature = "tokio", feature = "smol"))))] {
+//! use eulogy::{AsyncDrop, DropLater};
+//!
+//! pub struct Session { /* ... */ }
+//!
+//! impl AsyncDrop for Session {
+//!     async fn async_drop(self) { /* tear down */ }
+//! }
+//!
+//! impl Session {
+//!     pub fn open() -> DropLater<Self> {
+//!         Session { /* ... */ }.later()
+//!     }
+//! }
+//! # }
+//! ```
+//!
+//! Cargo unifies features across the dep graph, so a library depending on
+//! `eulogy` with **no features** still gets a working `.later()` — the binary
+//! above it turns on `tokio` or `smol`, and the library's call resolves
+//! against that same build. The library doesn't need its own runtime flags
+//! for its consumers.
+//!
+//! Library devs do need to select a runtime for any testing. With no runtime
+//! feature, `.later()` won't compile. To handle this you can do one of the 
+//! following:
+//!
+//! 1. **Turn on a runtime as a dev-dependency.** Simplest for most libraries
+//!    — `.later()` is available in tests, but consumers still pick their own
+//!    runtime:
+//!
+//!    ```toml
+//!    [dependencies]
+//!    eulogy = "0.1"
+//!
+//!    [dev-dependencies]
+//!    eulogy = { version = "0.1", features = ["tokio"] }
+//!    ```
+//!
+//! 2. **Passthrough features.** Re-expose the runtime choice so downstream
+//!    can flip it via your crate's features:
+//!
+//!    ```toml
+//!    [features]
+//!    tokio = ["eulogy/tokio"]
+//!    smol = ["eulogy/smol"]
+//!    ```
+//!
+//! 3. **Accept a [`Spawner`] from the caller.** Use [`AsyncDrop::later_with`]
+//!    instead of `.later()` — no feature flags needed, and callers can plug
+//!    in whatever runtime they use (including a custom test spawner):
+//!
+//!    ```
+//!    use eulogy::{AsyncDrop, DropLater, Spawner};
+//!
+//!    # struct Session;
+//!    # impl AsyncDrop for Session { async fn async_drop(self) {} }
+//!    impl Session {
+//!        pub fn open_with(spawner: &impl Spawner) -> DropLater<Self> {
+//!            Session { /* ... */ }.later_with(spawner)
+//!        }
+//!    }
+//!    ```
 //!
 //! ## Ordering
 //!
 //! The [`ordering`] module provides primitives to enforce drop order between
 //! related resources (e.g. a parent directory must outlive its children).
+
+// Let `::eulogy` resolve inside the crate too, so the `AsyncDrop` derive can
+// emit fully-qualified paths that work both here and in downstream crates.
+extern crate self as eulogy;
 
 use std::future::Future;
 use std::pin::Pin;

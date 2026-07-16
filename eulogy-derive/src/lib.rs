@@ -12,7 +12,11 @@ use syn::{
 /// `[dependencies] foo = { package = "eulogy" }`.
 fn eulogy_crate() -> TokenStream2 {
     match crate_name("eulogy") {
-        Ok(FoundCrate::Itself) => quote!(crate),
+        // Inside eulogy itself, `crate::` won't resolve when the derive is
+        // used from a doctest binary. Rely on `extern crate self as eulogy;`
+        // in lib.rs so `::eulogy` works in both crate-internal and doctest
+        // contexts.
+        Ok(FoundCrate::Itself) => quote!(::eulogy),
         Ok(FoundCrate::Name(name)) => {
             let ident = Ident::new(&name, Span::call_site());
             quote!(::#ident)
