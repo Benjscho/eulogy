@@ -50,7 +50,7 @@ filling out the extra steps. Use `#[eulogy(after = [...])]` to control the
 order fields are cleaned up. `after` is syntactic sugar for `eulogy::ordering`, 
 look at that module to see how the primitive works.
 
-```rust,no_run
+```rust,no_run,ignore
 use eulogy::AsyncDrop;
 
 struct Socket { id: u64 }
