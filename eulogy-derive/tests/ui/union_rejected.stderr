@@ -1,0 +1,5 @@
+error: #[derive(AsyncDrop)] does not support unions — there is no safe way to know which field is active, so the derive cannot know what to drop
+ --> tests/ui/union_rejected.rs:4:7
+  |
+4 | union Foo {
+  |       ^^^

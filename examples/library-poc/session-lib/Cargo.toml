@@ -1,0 +1,17 @@
+[package]
+name = "session-lib"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[dependencies]
+eulogy = { path = "../../.." }
+
+[dev-dependencies]
+# Turn on a runtime for the library's own `cargo check` / `cargo test`, so
+# `.later()` compiles standalone. Consumers still pick their own runtime.
+eulogy = { path = "../../..", features = ["tokio"] }
+
+[features]
+tokio = ["eulogy/tokio"]
+smol = ["eulogy/smol"]

@@ -1,0 +1,5 @@
+error: unknown #[eulogy(...)] key — expected `after` or `skip`
+  --> tests/ui/unknown_eulogy_key.rs:11:14
+   |
+11 |     #[eulogy(bogus = true)]
+   |              ^^^^^

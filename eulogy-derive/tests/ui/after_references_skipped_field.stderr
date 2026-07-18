@@ -1,0 +1,5 @@
+error: field `child` is skipped or unannotated — it cannot appear in an `after` list
+  --> tests/ui/after_references_skipped_field.rs:13:23
+   |
+13 |     #[eulogy(after = [child])]
+   |                       ^^^^^

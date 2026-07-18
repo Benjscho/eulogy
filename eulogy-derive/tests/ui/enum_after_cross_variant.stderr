@@ -1,0 +1,5 @@
+error: no field `a` in variant `Baz`
+  --> tests/ui/enum_after_cross_variant.rs:13:27
+   |
+13 |         #[eulogy(after = [a])]
+   |                           ^

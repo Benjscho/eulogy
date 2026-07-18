@@ -1,0 +1,21 @@
+[package]
+name = "eulogy-derive"
+version = "0.1.0"
+edition = "2024"
+description = "Derive macro for eulogy::AsyncDrop"
+license = "Apache-2.0"
+repository = "https://github.com/Benjscho/eulogy"
+
+[lib]
+proc-macro = true
+
+[dependencies]
+quote = "1"
+syn = { version = "2", features = ["full"] }
+proc-macro2 = "1"
+proc-macro-crate = "3"
+
+[dev-dependencies]
+trybuild = "1"
+eulogy = { path = "..", features = ["derive", "tokio"] }
+tokio = { version = "1", features = ["full"] }

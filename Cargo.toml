@@ -1,10 +1,53 @@
 [package]
 name = "eulogy"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2024"
 description = "Userspace async drop for Rust"
 license = "Apache-2.0"
+repository = "https://github.com/Benjscho/eulogy"
 keywords = ["async", "drop", "cleanup", "teardown"]
 categories = ["asynchronous", "rust-patterns"]
 
+[package.metadata.docs.rs]
+# Build docs with tokio + derive; smol is mutually exclusive with tokio so it
+# can't be enabled at the same time. All public APIs are visible under these
+# features. The --cfg docsrs flag enables doc(cfg(...)) annotations.
+features = ["tokio", "derive"]
+rustdoc-args = ["--cfg", "docsrs"]
+
+[features]
+derive = ["dep:eulogy-derive"]
+tokio = ["dep:tokio"]
+smol = ["dep:smol"]
+
 [dependencies]
+async-channel = "2"
+futures-util = { version = "0.3", default-features = false, features = ["alloc", "async-await-macro"] }
+tracing = "0.1"
+tokio = { version = "1", features = ["rt"], optional = true }
+smol = { version = "2", optional = true }
+eulogy-derive = { version = "0.1", path = "eulogy-derive", optional = true }
+
+[dev-dependencies]
+tokio = { version = "1", features = ["full"] }
+smol = "2"
+
+[[example]]
+name = "tokio"
+path = "examples/tokio.rs"
+required-features = ["tokio"]
+
+[[example]]
+name = "smol"
+path = "examples/smol.rs"
+required-features = ["smol"]
+
+[[example]]
+name = "derive"
+path = "examples/derive.rs"
+required-features = ["derive", "tokio"]
+
+[[example]]
+name = "derive_enum"
+path = "examples/derive_enum.rs"
+required-features = ["derive", "tokio"]

@@ -1,0 +1,5 @@
+error: field `child` cannot list itself in #[eulogy(after = [...])]
+  --> tests/ui/after_self_reference.rs:11:23
+   |
+11 |     #[eulogy(after = [child])]
+   |                       ^^^^^
