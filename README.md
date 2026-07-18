@@ -19,8 +19,7 @@ in stable rust.
 eulogy = { version = "0.1", features = ["tokio"] }
 ```
 
-```rust
-# #[cfg(all(feature = "tokio", not(feature = "smol")))] {
+```rust,no_run
 use eulogy::AsyncDrop;
 
 struct Connection { id: u64 }
@@ -32,12 +31,12 @@ impl AsyncDrop for Connection {
     }
 }
 
-# tokio::runtime::Runtime::new().unwrap().block_on(async {
-let conn = Connection { id: 1 }.later();
-println!("using connection {}", conn.id);
-// conn drops here and your async drop runs
-# });
-# }
+#[tokio::main]
+async fn main() {
+    let conn = Connection { id: 1 }.later();
+    println!("using connection {}", conn.id);
+    // conn drops here and your async drop runs
+}
 ```
 
 `.later()` spawns a drop task and returns a drop guard. On drop, the guard sends 
@@ -51,8 +50,7 @@ filling out the extra steps. Use `#[eulogy(after = [...])]` to control the
 order fields are cleaned up. `after` is syntactic sugar for `eulogy::ordering`, 
 look at that module to see how the primitive works.
 
-```rust
-# #[cfg(all(feature = "tokio", not(feature = "smol"), feature = "derive"))] {
+```rust,no_run
 use eulogy::AsyncDrop;
 
 struct Socket { id: u64 }
@@ -73,15 +71,15 @@ struct Connection {
     logger: Logger,
 }
 
-# tokio::runtime::Runtime::new().unwrap().block_on(async {
-let _conn = Connection {
-    socket: Socket { id: 1 },
-    logger: Logger { name: "audit".into() },
+#[tokio::main]
+async fn main() {
+    let _conn = Connection {
+        socket: Socket { id: 1 },
+        logger: Logger { name: "audit".into() },
+    }
+    .later();
+    // drop order: socket first, then logger
 }
-.later();
-// drop order: socket first, then logger
-# });
-# }
 ```
 
 Fields that don't need async cleanup can be opted out with `#[eulogy(skip)]`.
@@ -157,8 +155,12 @@ feature flags needed at all, and tests can pass a custom spawner:
 ```rust,no_run
 use eulogy::{AsyncDrop, DropLater, Spawner};
 
-# struct Session;
-# impl AsyncDrop for Session { async fn async_drop(self) {} }
+struct Session { /* ... */ }
+
+impl AsyncDrop for Session {
+    async fn async_drop(self) { /* tear down */ }
+}
+
 impl Session {
     pub fn open_with(spawner: &impl Spawner) -> DropLater<Self> {
         Session { /* ... */ }.later_with(spawner)
