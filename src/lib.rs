@@ -330,8 +330,6 @@ impl<T: AsyncDrop + std::fmt::Debug + 'static> std::fmt::Debug for DropLater<T> 
 #[doc(hidden)]
 pub mod __private {
     use std::future::Future;
-    use std::pin::Pin;
-    use std::task::{Context, Poll};
 
     /// Await a fixed set of futures concurrently. Returns when every future
     /// has resolved. Used by the derive to drop independent fields in parallel.
@@ -339,30 +337,7 @@ pub mod __private {
     where
         F: Future<Output = ()>,
     {
-        struct JoinAll<F: Future<Output = ()>> {
-            futs: Vec<Option<Pin<Box<F>>>>,
-        }
-
-        impl<F: Future<Output = ()>> Future for JoinAll<F> {
-            type Output = ();
-            fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<()> {
-                let mut all_done = true;
-                for slot in self.futs.iter_mut() {
-                    if let Some(fut) = slot.as_mut() {
-                        match fut.as_mut().poll(cx) {
-                            Poll::Ready(()) => *slot = None,
-                            Poll::Pending => all_done = false,
-                        }
-                    }
-                }
-                if all_done { Poll::Ready(()) } else { Poll::Pending }
-            }
-        }
-
-        JoinAll {
-            futs: futs.into_iter().map(|f| Some(Box::pin(f))).collect(),
-        }
-        .await;
+        futures_util::future::join_all(futs).await;
     }
 }
 
