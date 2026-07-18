@@ -339,6 +339,11 @@ pub mod __private {
     {
         futures_util::future::join_all(futs).await;
     }
+
+    /// Re-exported so the derive can emit `#krate::__private::join!(...)` to
+    /// poll a fixed, statically-known set of (possibly differently-typed)
+    /// futures concurrently without boxing or a `Vec`.
+    pub use futures_util::join;
 }
 
 // --- Runtime spawners ---

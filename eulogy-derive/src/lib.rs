@@ -396,9 +396,7 @@ fn layer_calls(
                     quote! { #acc.async_drop() }
                 });
                 quote! {
-                    #krate::__private::join_all(vec![
-                        #( Box::pin(#futs) as ::std::pin::Pin<Box<dyn ::std::future::Future<Output = ()> + Send>> ),*
-                    ]).await;
+                    #krate::__private::join!( #( #futs ),* );
                 }
             }
         })
