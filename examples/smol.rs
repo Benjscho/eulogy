@@ -2,7 +2,7 @@
 
 use std::path::PathBuf;
 
-use eulogy::{ordering, AsyncDrop};
+use eulogy::{AsyncDrop, ordering};
 
 #[derive(Debug)]
 struct TempDir {

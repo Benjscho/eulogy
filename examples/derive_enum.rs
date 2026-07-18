@@ -43,7 +43,12 @@ enum Connection {
     /// A single field, referenced by position.
     Unix(Socket),
     /// The pool tag is sync-only and skipped.
-    Pooled(Socket, #[eulogy(skip)] #[allow(dead_code)] PoolTag),
+    Pooled(
+        Socket,
+        #[eulogy(skip)]
+        #[allow(dead_code)]
+        PoolTag,
+    ),
     /// No fields to drop — this arm is a no-op.
     Closed,
 }
@@ -51,15 +56,24 @@ enum Connection {
 #[tokio::main]
 async fn main() {
     let tcp = Connection::Tcp {
-        sock: Socket { label: "tcp-1".into() },
-        logger: Logger { label: "tcp-1-log".into() },
+        sock: Socket {
+            label: "tcp-1".into(),
+        },
+        logger: Logger {
+            label: "tcp-1-log".into(),
+        },
     }
     .later();
 
-    let unix = Connection::Unix(Socket { label: "unix-1".into() }).later();
+    let unix = Connection::Unix(Socket {
+        label: "unix-1".into(),
+    })
+    .later();
 
     let pooled = Connection::Pooled(
-        Socket { label: "pooled-1".into() },
+        Socket {
+            label: "pooled-1".into(),
+        },
         PoolTag("default"),
     )
     .later();

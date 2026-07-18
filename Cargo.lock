@@ -197,7 +197,7 @@ dependencies = [
 
 [[package]]
 name = "eulogy"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "async-channel",
  "eulogy-derive",
@@ -296,6 +296,7 @@ dependencies = [
  "futures-macro",
  "futures-task",
  "pin-project-lite",
+ "slab",
 ]
 
 [[package]]

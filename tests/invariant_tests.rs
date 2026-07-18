@@ -38,7 +38,10 @@ impl AsyncDrop for SlowDrop {
 #[tokio::test]
 async fn drop_runs_exactly_once() {
     let count = Arc::new(AtomicU32::new(0));
-    let guard = Counter { drop_count: count.clone() }.later();
+    let guard = Counter {
+        drop_count: count.clone(),
+    }
+    .later();
 
     // Move the guard into a new scope.
     let moved = guard;
@@ -53,9 +56,18 @@ async fn drop_runs_exactly_once() {
 async fn multiple_guards_each_drop_once() {
     let count = Arc::new(AtomicU32::new(0));
 
-    let g1 = Counter { drop_count: count.clone() }.later();
-    let g2 = Counter { drop_count: count.clone() }.later();
-    let g3 = Counter { drop_count: count.clone() }.later();
+    let g1 = Counter {
+        drop_count: count.clone(),
+    }
+    .later();
+    let g2 = Counter {
+        drop_count: count.clone(),
+    }
+    .later();
+    let g3 = Counter {
+        drop_count: count.clone(),
+    }
+    .later();
 
     drop(g1);
     drop(g2);
@@ -92,7 +104,10 @@ async fn drop_completes_before_task_exits() {
 async fn into_inner_skips_async_drop() {
     let count = Arc::new(AtomicU32::new(0));
 
-    let guard = Counter { drop_count: count.clone() }.later();
+    let guard = Counter {
+        drop_count: count.clone(),
+    }
+    .later();
     let recovered = guard.into_inner();
 
     // Give the spawned task a chance to notice the sender was dropped.
@@ -102,7 +117,11 @@ async fn into_inner_skips_async_drop() {
     // We still hold `recovered` — sync drop when it goes out of scope. No leak.
     drop(recovered);
     tokio::time::sleep(Duration::from_millis(50)).await;
-    assert_eq!(count.load(Ordering::SeqCst), 0, "sync drop doesn't call async_drop either");
+    assert_eq!(
+        count.load(Ordering::SeqCst),
+        0,
+        "sync drop doesn't call async_drop either"
+    );
 }
 
 /// If the receiver task is gone (simulating runtime shutdown), Drop doesn't panic.
@@ -123,7 +142,10 @@ async fn cancellation_does_not_panic() {
         }
     }
 
-    let guard = Counter { drop_count: count.clone() }.later_with(&BlackHoleSpawner);
+    let guard = Counter {
+        drop_count: count.clone(),
+    }
+    .later_with(&BlackHoleSpawner);
     drop(guard); // Should not panic.
 
     tokio::time::sleep(Duration::from_millis(10)).await;
@@ -199,7 +221,10 @@ async fn ordering_under_contention() {
         assert!(
             prev < curr,
             "resource {} (pos {}) should drop before resource {} (pos {})",
-            i - 1, prev, i, curr
+            i - 1,
+            prev,
+            i,
+            curr
         );
     }
 }
@@ -258,9 +283,24 @@ async fn parent_waits_for_all_trigger_clones() {
     let c2_at = Arc::new(AtomicU32::new(0));
     let c3_at = Arc::new(AtomicU32::new(0));
 
-    let c1 = Child { _trigger: trigger.clone(), released_at: c1_at.clone(), seq: seq.clone() }.later();
-    let c2 = Child { _trigger: trigger.clone(), released_at: c2_at.clone(), seq: seq.clone() }.later();
-    let c3 = Child { _trigger: trigger, released_at: c3_at.clone(), seq: seq.clone() }.later();
+    let c1 = Child {
+        _trigger: trigger.clone(),
+        released_at: c1_at.clone(),
+        seq: seq.clone(),
+    }
+    .later();
+    let c2 = Child {
+        _trigger: trigger.clone(),
+        released_at: c2_at.clone(),
+        seq: seq.clone(),
+    }
+    .later();
+    let c3 = Child {
+        _trigger: trigger,
+        released_at: c3_at.clone(),
+        seq: seq.clone(),
+    }
+    .later();
 
     // Drop parent first, then children. Parent's async_drop must block on
     // the wait until all three children have completed.
@@ -279,7 +319,11 @@ async fn parent_waits_for_all_trigger_clones() {
     drop(c3);
 
     tokio::time::sleep(Duration::from_millis(100)).await;
-    assert_eq!(parent_cleaned.load(Ordering::SeqCst), 1, "parent should have cleaned up");
+    assert_eq!(
+        parent_cleaned.load(Ordering::SeqCst),
+        1,
+        "parent should have cleaned up"
+    );
 
     // All three children ran; each recorded a position 1..=3.
     assert!(c1_at.load(Ordering::SeqCst) > 0);

@@ -24,7 +24,10 @@ struct BatchWriter {
 
 impl BatchWriter {
     fn new(sink: Arc<Mutex<Vec<String>>>) -> Self {
-        Self { buffer: Vec::new(), sink }
+        Self {
+            buffer: Vec::new(),
+            sink,
+        }
     }
 
     fn write(&mut self, record: String) {
@@ -104,7 +107,9 @@ async fn connection_recovery_on_incomplete_transaction() {
     let recovered = Arc::new(AtomicBool::new(false));
 
     let conn = Connection {
-        vm: Some(MicroVm { recovered: recovered.clone() }),
+        vm: Some(MicroVm {
+            recovered: recovered.clone(),
+        }),
         transaction_complete: false,
     }
     .later();
@@ -113,7 +118,10 @@ async fn connection_recovery_on_incomplete_transaction() {
     drop(conn);
 
     tokio::time::sleep(Duration::from_millis(50)).await;
-    assert!(recovered.load(Ordering::SeqCst), "VM should have been recovered");
+    assert!(
+        recovered.load(Ordering::SeqCst),
+        "VM should have been recovered"
+    );
 }
 
 #[tokio::test]
@@ -121,7 +129,9 @@ async fn connection_clean_close_no_recovery() {
     let recovered = Arc::new(AtomicBool::new(false));
 
     let mut conn = Connection {
-        vm: Some(MicroVm { recovered: recovered.clone() }),
+        vm: Some(MicroVm {
+            recovered: recovered.clone(),
+        }),
         transaction_complete: false,
     }
     .later();
@@ -152,7 +162,10 @@ impl SshSession {
         let connected = Arc::new(AtomicBool::new(true));
         let disconnect_called = Arc::new(AtomicBool::new(false));
         (
-            Self { connected: connected.clone(), disconnect_called: disconnect_called.clone() },
+            Self {
+                connected: connected.clone(),
+                disconnect_called: disconnect_called.clone(),
+            },
             connected,
             disconnect_called,
         )
@@ -183,7 +196,10 @@ impl AsyncDrop for SshBinary {
 async fn ssh_disconnect_on_drop() {
     let (session, connected, disconnect_called) = SshSession::new();
 
-    let binary = SshBinary { session: Some(session) }.later();
+    let binary = SshBinary {
+        session: Some(session),
+    }
+    .later();
 
     assert!(connected.load(Ordering::SeqCst));
     assert!(!disconnect_called.load(Ordering::SeqCst));
@@ -192,7 +208,10 @@ async fn ssh_disconnect_on_drop() {
 
     tokio::time::sleep(Duration::from_millis(50)).await;
     assert!(!connected.load(Ordering::SeqCst), "should be disconnected");
-    assert!(disconnect_called.load(Ordering::SeqCst), "disconnect was called");
+    assert!(
+        disconnect_called.load(Ordering::SeqCst),
+        "disconnect was called"
+    );
 }
 
 #[tokio::test]
@@ -201,7 +220,10 @@ async fn ssh_already_disconnected() {
     // Simulate already disconnected.
     session.connected.store(false, Ordering::SeqCst);
 
-    let binary = SshBinary { session: Some(session) }.later();
+    let binary = SshBinary {
+        session: Some(session),
+    }
+    .later();
     drop(binary);
 
     tokio::time::sleep(Duration::from_millis(50)).await;
@@ -246,7 +268,10 @@ struct Transaction {
 impl Transaction {
     async fn begin(conn: Arc<FakeConnection>) -> Self {
         conn.send(TxCommand::Begin).await;
-        Self { conn, committed: false }
+        Self {
+            conn,
+            committed: false,
+        }
     }
 
     async fn commit(&mut self) {
@@ -267,7 +292,9 @@ impl AsyncDrop for Transaction {
 #[tokio::test]
 async fn transaction_rollback_on_drop() {
     let commands = Arc::new(Mutex::new(Vec::new()));
-    let conn = Arc::new(FakeConnection { commands: commands.clone() });
+    let conn = Arc::new(FakeConnection {
+        commands: commands.clone(),
+    });
 
     let tx = Transaction::begin(conn.clone()).await.later();
 
@@ -283,7 +310,9 @@ async fn transaction_rollback_on_drop() {
 #[tokio::test]
 async fn transaction_no_rollback_after_commit() {
     let commands = Arc::new(Mutex::new(Vec::new()));
-    let conn = Arc::new(FakeConnection { commands: commands.clone() });
+    let conn = Arc::new(FakeConnection {
+        commands: commands.clone(),
+    });
 
     let mut tx = Transaction::begin(conn.clone()).await.later();
     tx.commit().await;

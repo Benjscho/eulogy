@@ -15,7 +15,13 @@ struct Tracker {
 impl Tracker {
     fn new(order: Arc<AtomicU32>) -> (Self, Arc<AtomicU32>) {
         let dropped_at = Arc::new(AtomicU32::new(0));
-        (Self { order, dropped_at: dropped_at.clone() }, dropped_at)
+        (
+            Self {
+                order,
+                dropped_at: dropped_at.clone(),
+            },
+            dropped_at,
+        )
     }
 }
 
@@ -125,7 +131,12 @@ async fn after_enforces_order() {
     let (second, second_at) = Tracker::new(order.clone());
     let (third, third_at) = Tracker::new(order.clone());
 
-    let guard = WithOrdering { first, second, third }.later();
+    let guard = WithOrdering {
+        first,
+        second,
+        third,
+    }
+    .later();
     drop(guard);
     tokio::time::sleep(std::time::Duration::from_millis(50)).await;
 
@@ -155,8 +166,14 @@ async fn independent_slow_drops_run_concurrently() {
     let done = Arc::new(AtomicU32::new(0));
     let delay = std::time::Duration::from_millis(100);
     let guard = TwoSlow {
-        a: SlowTracker { delay, done: done.clone() },
-        b: SlowTracker { delay, done: done.clone() },
+        a: SlowTracker {
+            delay,
+            done: done.clone(),
+        },
+        b: SlowTracker {
+            delay,
+            done: done.clone(),
+        },
     }
     .later();
 
@@ -164,7 +181,8 @@ async fn independent_slow_drops_run_concurrently() {
     drop(guard);
 
     // If serial, this would need > 200ms. Give a generous margin for CI.
-    while done.load(Ordering::SeqCst) < 2 && start.elapsed() < std::time::Duration::from_millis(500) {
+    while done.load(Ordering::SeqCst) < 2 && start.elapsed() < std::time::Duration::from_millis(500)
+    {
         tokio::time::sleep(std::time::Duration::from_millis(10)).await;
     }
     let elapsed = start.elapsed();
@@ -202,7 +220,11 @@ async fn skip_opts_out_of_async_drop() {
     tokio::time::sleep(std::time::Duration::from_millis(50)).await;
 
     assert_eq!(tracked_at.load(Ordering::SeqCst), 1);
-    assert_eq!(not_tracked_at.load(Ordering::SeqCst), 0, "#[eulogy(skip)] field should not have async_drop called");
+    assert_eq!(
+        not_tracked_at.load(Ordering::SeqCst),
+        0,
+        "#[eulogy(skip)] field should not have async_drop called"
+    );
     assert_eq!(order.load(Ordering::SeqCst), 1); // only one async_drop called
     assert_eq!(order.load(Ordering::SeqCst), 1); // only one async_drop called
 }

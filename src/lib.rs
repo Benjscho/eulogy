@@ -42,7 +42,7 @@
 //! ### Deriving `AsyncDrop`
 //!
 //! Instead of manually implementing on each struct, you can derive AsyncDrop
-//! for any structs whose fields all implement it. You can use 
+//! for any structs whose fields all implement it. You can use
 //! `#[eulogy(after = [...])]` to enforce drop ordering between fields:
 //!
 //! ```toml
@@ -116,7 +116,7 @@
 //! for its consumers.
 //!
 //! Library devs do need to select a runtime for any testing. With no runtime
-//! feature, `.later()` won't compile. To handle this you can do one of the 
+//! feature, `.later()` won't compile. To handle this you can do one of the
 //! following:
 //!
 //! 1. **Turn on a runtime as a dev-dependency.** Simplest for most libraries

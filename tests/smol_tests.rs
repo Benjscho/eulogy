@@ -37,7 +37,10 @@ impl AsyncDrop for SlowDrop {
 fn drop_runs_once_smol() {
     smol::block_on(async {
         let count = Arc::new(AtomicU32::new(0));
-        let guard = Counter { count: count.clone() }.later();
+        let guard = Counter {
+            count: count.clone(),
+        }
+        .later();
         drop(guard);
         smol::Timer::after(Duration::from_millis(50)).await;
         assert_eq!(count.load(Ordering::SeqCst), 1);
@@ -48,9 +51,18 @@ fn drop_runs_once_smol() {
 fn multiple_guards_smol() {
     smol::block_on(async {
         let count = Arc::new(AtomicU32::new(0));
-        let g1 = Counter { count: count.clone() }.later();
-        let g2 = Counter { count: count.clone() }.later();
-        let g3 = Counter { count: count.clone() }.later();
+        let g1 = Counter {
+            count: count.clone(),
+        }
+        .later();
+        let g2 = Counter {
+            count: count.clone(),
+        }
+        .later();
+        let g3 = Counter {
+            count: count.clone(),
+        }
+        .later();
         drop(g1);
         drop(g2);
         drop(g3);
@@ -78,7 +90,10 @@ fn slow_drop_completes_smol() {
 fn into_inner_smol() {
     smol::block_on(async {
         let count = Arc::new(AtomicU32::new(0));
-        let guard = Counter { count: count.clone() }.later();
+        let guard = Counter {
+            count: count.clone(),
+        }
+        .later();
         let _recovered = guard.into_inner();
         smol::Timer::after(Duration::from_millis(50)).await;
         assert_eq!(count.load(Ordering::SeqCst), 0);
@@ -103,8 +118,12 @@ mod derive_smol {
         smol::block_on(async {
             let count = Arc::new(AtomicU32::new(0));
             let guard = Parent {
-                first: Counter { count: count.clone() },
-                second: Counter { count: count.clone() },
+                first: Counter {
+                    count: count.clone(),
+                },
+                second: Counter {
+                    count: count.clone(),
+                },
             }
             .later();
             drop(guard);

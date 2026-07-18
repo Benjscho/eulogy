@@ -15,7 +15,13 @@ struct Tracker {
 impl Tracker {
     fn new(order: Arc<AtomicU32>) -> (Self, Arc<AtomicU32>) {
         let dropped_at = Arc::new(AtomicU32::new(0));
-        (Self { order, dropped_at: dropped_at.clone() }, dropped_at)
+        (
+            Self {
+                order,
+                dropped_at: dropped_at.clone(),
+            },
+            dropped_at,
+        )
     }
 }
 
@@ -93,7 +99,10 @@ async fn option_some_drops_inner() {
     let order = Arc::new(AtomicU32::new(0));
     let (tracker, dropped_at) = Tracker::new(order.clone());
 
-    let guard = WithOption { maybe: Some(tracker) }.later();
+    let guard = WithOption {
+        maybe: Some(tracker),
+    }
+    .later();
     drop(guard);
     tokio::time::sleep(std::time::Duration::from_millis(50)).await;
 
@@ -112,7 +121,10 @@ async fn box_unboxes_and_drops() {
     let order = Arc::new(AtomicU32::new(0));
     let (tracker, dropped_at) = Tracker::new(order.clone());
 
-    let guard = WithBox { boxed: Box::new(tracker) }.later();
+    let guard = WithBox {
+        boxed: Box::new(tracker),
+    }
+    .later();
     drop(guard);
     tokio::time::sleep(std::time::Duration::from_millis(50)).await;
 
@@ -124,9 +136,18 @@ async fn vec_drops_elements_concurrently() {
     let done = Arc::new(AtomicU32::new(0));
     let delay = std::time::Duration::from_millis(100);
     let many = vec![
-        SlowTracker { delay, done: done.clone() },
-        SlowTracker { delay, done: done.clone() },
-        SlowTracker { delay, done: done.clone() },
+        SlowTracker {
+            delay,
+            done: done.clone(),
+        },
+        SlowTracker {
+            delay,
+            done: done.clone(),
+        },
+        SlowTracker {
+            delay,
+            done: done.clone(),
+        },
     ];
 
     let guard = WithVec { many }.later();
@@ -134,7 +155,8 @@ async fn vec_drops_elements_concurrently() {
     let start = std::time::Instant::now();
     drop(guard);
 
-    while done.load(Ordering::SeqCst) < 3 && start.elapsed() < std::time::Duration::from_millis(500) {
+    while done.load(Ordering::SeqCst) < 3 && start.elapsed() < std::time::Duration::from_millis(500)
+    {
         tokio::time::sleep(std::time::Duration::from_millis(10)).await;
     }
     let elapsed = start.elapsed();

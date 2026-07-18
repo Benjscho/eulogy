@@ -42,7 +42,11 @@ async fn main() {
 
     let deployment = Deployment { child, parent }.later();
 
-    println!("using: {}, {}", deployment.child.path.display(), deployment.parent.path.display());
+    println!(
+        "using: {}, {}",
+        deployment.child.path.display(),
+        deployment.parent.path.display()
+    );
 
     drop(deployment);
 
