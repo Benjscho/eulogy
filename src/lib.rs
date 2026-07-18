@@ -1,3 +1,4 @@
+#![cfg_attr(docsrs, feature(doc_cfg))]
 //! # Eulogy
 //!
 //! Give your data a good send off.
@@ -180,6 +181,7 @@ compile_error!(
 
 /// Re-export the derive macro when the `derive` feature is enabled.
 #[cfg(feature = "derive")]
+#[cfg_attr(docsrs, doc(cfg(feature = "derive")))]
 pub use eulogy_derive::AsyncDrop;
 
 mod std_impls;
@@ -196,6 +198,7 @@ pub trait AsyncDrop: Send {
     ///
     /// Must be called from within a runtime context.
     #[cfg(all(feature = "tokio", not(feature = "smol")))]
+    #[cfg_attr(docsrs, doc(cfg(feature = "tokio")))]
     fn later(self) -> DropLater<Self>
     where
         Self: Sized + 'static,
@@ -210,6 +213,7 @@ pub trait AsyncDrop: Send {
     ///
     /// Must be called from within a `smol` scope.
     #[cfg(all(feature = "smol", not(feature = "tokio")))]
+    #[cfg_attr(docsrs, doc(cfg(feature = "smol")))]
     fn later(self) -> DropLater<Self>
     where
         Self: Sized + 'static,

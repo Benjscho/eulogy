@@ -8,6 +8,13 @@ repository = "https://github.com/Benjscho/eulogy"
 keywords = ["async", "drop", "cleanup", "teardown"]
 categories = ["asynchronous", "rust-patterns"]
 
+[package.metadata.docs.rs]
+# Build docs with tokio + derive; smol is mutually exclusive with tokio so it
+# can't be enabled at the same time. All public APIs are visible under these
+# features. The --cfg docsrs flag enables doc(cfg(...)) annotations.
+features = ["tokio", "derive"]
+rustdoc-args = ["--cfg", "docsrs"]
+
 [features]
 derive = ["dep:eulogy-derive"]
 tokio = ["dep:tokio"]

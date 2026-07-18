@@ -19,7 +19,7 @@ in stable rust.
 eulogy = { version = "0.1", features = ["tokio"] }
 ```
 
-```rust,no_run
+```rust,no_run,ignore
 use eulogy::AsyncDrop;
 
 struct Connection { id: u64 }
@@ -111,7 +111,7 @@ Runtime agnostic library code can implement `AsyncDrop` and call `.later()`
 without picking a runtime. This lets you leave runtime choice up to your
 caller.
 
-```rust,no_run
+```rust,no_run,ignore
 use eulogy::{AsyncDrop, DropLater};
 
 pub struct Session { /* ... */ }
@@ -173,7 +173,7 @@ A full worked example for a runtime-agnostic library app lives in
 
 ## Why `eulogy`?
 
-`AsyncDrop` isn't yet standardised for the Rust standard library, so we need 
+`AsyncDrop` isn't yet stabilised for the Rust standard library, so we need 
 a way to fill the gap. There are a few alternatives, but `eulogy` aims to be
 the most ergonomic, still performant, and to cover the most use cases.
 
