@@ -161,12 +161,14 @@
 //! The [`ordering`] module provides primitives to enforce drop order between
 //! related resources (e.g. a parent directory must outlive its children).
 
+#[doc = include_str!("../README.md")]
+mod readme_doctests {}
+
 // Let `::eulogy` resolve inside the crate too, so the `AsyncDrop` derive can
 // emit fully-qualified paths that work both here and in downstream crates.
 extern crate self as eulogy;
 
 use std::future::Future;
-use std::pin::Pin;
 use std::ops;
 
 #[cfg(all(feature = "tokio", feature = "smol"))]
@@ -222,11 +224,11 @@ pub trait AsyncDrop: Send {
     {
         let (tx, rx) = async_channel::bounded(1);
         let guard = DropLater::new(self, tx);
-        spawner.spawn(Box::pin(async move {
+        spawner.spawn(async move {
             if let Ok(value) = rx.recv().await {
                 value.async_drop().await;
             }
-        }));
+        });
         guard
     }
 }
@@ -236,7 +238,9 @@ pub trait AsyncDrop: Send {
 /// You can implement this to use a custom runtime with
 /// [`AsyncDrop::later_with`].
 pub trait Spawner {
-    fn spawn(&self, future: Pin<Box<dyn Future<Output = ()> + Send>>);
+    fn spawn<F>(&self, future: F)
+    where
+        F: Future<Output = ()> + Send + 'static;
 }
 
 /// A guard that runs [`AsyncDrop`] on the contained value when dropped.
@@ -370,7 +374,10 @@ struct TokioSpawner;
 
 #[cfg(feature = "tokio")]
 impl Spawner for TokioSpawner {
-    fn spawn(&self, future: Pin<Box<dyn Future<Output = ()> + Send>>) {
+    fn spawn<F>(&self, future: F)
+    where
+        F: Future<Output = ()> + Send + 'static,
+    {
         tokio::spawn(future);
     }
 }
@@ -381,7 +388,10 @@ struct SmolSpawner;
 
 #[cfg(feature = "smol")]
 impl Spawner for SmolSpawner {
-    fn spawn(&self, future: Pin<Box<dyn Future<Output = ()> + Send>>) {
+    fn spawn<F>(&self, future: F)
+    where
+        F: Future<Output = ()> + Send + 'static,
+    {
         smol::spawn(future).detach();
     }
 }

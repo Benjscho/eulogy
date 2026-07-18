@@ -112,11 +112,13 @@ async fn cancellation_does_not_panic() {
 
     // Create a guard with a custom spawner that drops the task immediately.
     use std::future::Future;
-    use std::pin::Pin;
 
     struct BlackHoleSpawner;
     impl eulogy::Spawner for BlackHoleSpawner {
-        fn spawn(&self, _future: Pin<Box<dyn Future<Output = ()> + Send>>) {
+        fn spawn<F>(&self, _future: F)
+        where
+            F: Future<Output = ()> + Send + 'static,
+        {
             // Don't actually spawn — simulates task being cancelled.
         }
     }
